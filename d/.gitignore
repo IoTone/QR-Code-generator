@@ -1,0 +1,14 @@
+.dub
+docs.json
+__dummy.html
+docs/
+qr-d.so
+qr-d.dylib
+qr-d.dll
+qr-d.a
+qr-d.lib
+qr-d-test-*
+*.exe
+*.o
+*.obj
+*.lst
