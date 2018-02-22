@@ -20,10 +20,8 @@
  *   out of or in connection with the Software or the use or other dealings in the
  *   Software.
  */
-import std.stdio;
-import qrd.qrcode;
 
-void main()
-{
-	writeln("A simple demo app that generates a QR code");
-}
+module qrd;
+public import qrd.qrcode;
+public import qrd.qrcodegenerator;
+public import qrd.qrsegment;

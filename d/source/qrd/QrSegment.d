@@ -21,3 +21,9 @@
  *   Software.
  */
 module qrd.qrcodesegment;
+
+import std.bitmanip;
+
+final class QrSegment {
+    
+}
