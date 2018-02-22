@@ -24,4 +24,4 @@
 module qrd;
 public import qrd.qrcode;
 public import qrd.qrcodegenerator;
-public import qrd.qrsegment;
+public import qrd.qrcodesegment;
