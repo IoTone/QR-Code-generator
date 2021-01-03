@@ -5,6 +5,6 @@
 		"@pedroalvesbatista"
 	],
 	"description": "A minimal D qr code generator",
-	"copyright": "Copyright © 2018, Project Nayuki",
+	"copyright": "Copyright © 2018-2021, Project Nayuki",
 	"license": "mit"
 }

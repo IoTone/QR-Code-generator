@@ -21,7 +21,8 @@
  *   Software.
  */
 import std.stdio;
-import qrd.qrcode;
+// import qrd.qrcodegenworker;
+import qrd.qrcodegen;
 
 void main()
 {

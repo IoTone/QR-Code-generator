@@ -22,6 +22,5 @@
  */
 
 module qrd;
-public import qrd.qrcode;
-public import qrd.qrcodegenerator;
-public import qrd.qrcodesegment;
+public import qrd.qrcodegen;
+public import qrd.qrcodegenworker;
