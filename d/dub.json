@@ -2,7 +2,7 @@
 	"name": "qr-d",
 	"authors": [
 		"@truedat101",
-		"@pedroalvesbatista"
+		"@nayuki"
 	],
 	"description": "A minimal D qr code generator",
 	"copyright": "Copyright © 2018-2021, Project Nayuki",
