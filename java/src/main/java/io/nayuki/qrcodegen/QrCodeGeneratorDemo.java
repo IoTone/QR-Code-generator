@@ -28,11 +28,9 @@ package io.nayuki.qrcodegen;
 
 import java.awt.image.BufferedImage;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.List;
 import javax.imageio.ImageIO;
@@ -59,16 +57,14 @@ public final class QrCodeGeneratorDemo {
 		
 		QrCode qr = QrCode.encodeText(text, errCorLvl);  // Make the QR Code symbol
 		
-		BufferedImage img = qr.toImage(10, 4);          // Convert to bitmap image
-		File imgFile = new File("hello-world-QR.png");  // File path for output
-		ImageIO.write(img, "png", imgFile);             // Write image to file
+		BufferedImage img = qr.toImage(10, 4);           // Convert to bitmap image
+		File imgFile = new File("hello-world-QR.png");   // File path for output
+		ImageIO.write(img, "png", imgFile);              // Write image to file
 		
-		String svg = qr.toSvgString(4);  // Convert to SVG XML code
-		try (Writer out = new OutputStreamWriter(
-				new FileOutputStream("hello-world-QR.svg"),
-				StandardCharsets.UTF_8)) {
-			out.write(svg);  // Create/overwrite file and write SVG data
-		}
+		String svg = qr.toSvgString(4);                  // Convert to SVG XML code
+		File svgFile = new File("hello-world-QR.svg");   // File path for output
+		Files.write(svgFile.toPath(),                    // Write image to file
+			svg.getBytes(StandardCharsets.UTF_8));
 	}
 	
 	
@@ -132,23 +128,12 @@ public final class QrCodeGeneratorDemo {
 		qr = QrCode.encodeSegments(segs, QrCode.Ecc.LOW);
 		writePng(qr.toImage(8, 5), "phi-segmented-QR.png");
 		
-		// Illustration "Madoka": kanji, kana, Greek, Cyrillic, full-width Latin characters
+		// Illustration "Madoka": kanji, kana, Cyrillic, full-width Latin, Greek characters
 		String madoka = "「魔法少女まどか☆マギカ」って、　ИАИ　ｄｅｓｕ　κα？";
 		qr = QrCode.encodeText(madoka, QrCode.Ecc.LOW);
 		writePng(qr.toImage(9, 4), "madoka-utf8-QR.png");
 		
-		int[] kanjiChars = {  // Kanji mode encoding (13 bits per character)
-			0x0035, 0x1002, 0x0FC0, 0x0AED, 0x0AD7,
-			0x015C, 0x0147, 0x0129, 0x0059, 0x01BD,
-			0x018D, 0x018A, 0x0036, 0x0141, 0x0144,
-			0x0001, 0x0000, 0x0249, 0x0240, 0x0249,
-			0x0000, 0x0104, 0x0105, 0x0113, 0x0115,
-			0x0000, 0x0208, 0x01FF, 0x0008,
-		};
-		BitBuffer bb = new BitBuffer();
-		for (int c : kanjiChars)
-			bb.appendBits(c, 13);
-		segs = Arrays.asList(new QrSegment(QrSegment.Mode.KANJI, kanjiChars.length, bb));
+		segs = Arrays.asList(QrSegmentAdvanced.makeKanji(madoka));
 		qr = QrCode.encodeSegments(segs, QrCode.Ecc.LOW);
 		writePng(qr.toImage(9, 4), "madoka-kanji-QR.png");
 	}

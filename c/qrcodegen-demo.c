@@ -55,7 +55,7 @@ int main(void) {
 
 // Creates a single QR Code, then prints it to the console.
 static void doBasicDemo(void) {
-	const char *text = "Hello, world!";  // User-supplied text
+	const char *text = "Hello, world!";                // User-supplied text
 	enum qrcodegen_Ecc errCorLvl = qrcodegen_Ecc_LOW;  // Error correction level
 	
 	// Make and print the QR Code symbol
@@ -89,7 +89,8 @@ static void doVarietyDemo(void) {
 	}
 	
 	{  // Unicode text as UTF-8
-		const char *text = "\xE3\x81\x93\xE3\x82\x93\xE3\x81\xAB\xE3\x81\xA1wa\xE3\x80\x81\xE4\xB8\x96\xE7\x95\x8C\xEF\xBC\x81\x20\xCE\xB1\xCE\xB2\xCE\xB3\xCE\xB4";
+		const char *text = "\xE3\x81\x93\xE3\x82\x93\xE3\x81\xAB\xE3\x81\xA1wa\xE3\x80\x81"
+			"\xE4\xB8\x96\xE7\x95\x8C\xEF\xBC\x81\x20\xCE\xB1\xCE\xB2\xCE\xB3\xCE\xB4";
 		uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
 		uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
 		bool ok = qrcodegen_encodeText(text, tempBuffer, qrcode,
@@ -190,7 +191,7 @@ static void doSegmentDemo(void) {
 		}
 	}
 	
-	{  // Illustration "Madoka": kanji, kana, Greek, Cyrillic, full-width Latin characters
+	{  // Illustration "Madoka": kanji, kana, Cyrillic, full-width Latin, Greek characters
 		uint8_t qrcode[qrcodegen_BUFFER_LEN_MAX];
 		uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
 		bool ok;
@@ -223,7 +224,7 @@ static void doSegmentDemo(void) {
 			uint8_t *segBuf = calloc(qrcodegen_calcSegmentBufferSize(qrcodegen_Mode_KANJI, len), sizeof(uint8_t));
 			struct qrcodegen_Segment seg;
 			seg.mode = qrcodegen_Mode_KANJI;
-			seg.numChars = len;
+			seg.numChars = (int)len;
 			seg.bitLength = 0;
 			for (size_t i = 0; i < len; i++) {
 				for (int j = 12; j >= 0; j--, seg.bitLength++)

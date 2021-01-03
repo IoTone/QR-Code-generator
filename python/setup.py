@@ -1,5 +1,5 @@
 # 
-# QR Code generator Distutils script (Python 2, 3)
+# QR Code generator Distutils script (Python)
 # 
 # Copyright (c) Project Nayuki. (MIT License)
 # https://www.nayuki.io/page/qr-code-generator-library
@@ -26,9 +26,10 @@ import setuptools
 
 setuptools.setup(
 	name = "qrcodegen",
-	description = "High quality QR Code generator library for Python 2 and 3",
-	version = "1.2.0",
+	description = "High quality QR Code generator library for Python",
+	version = "1.6.0",
 	platforms = "OS Independent",
+	python_requires = '>=3',
 	license = "MIT License",
 	
 	author = "Project Nayuki",
@@ -42,7 +43,6 @@ setuptools.setup(
 		"License :: OSI Approved :: MIT License",
 		"Operating System :: OS Independent",
 		"Programming Language :: Python",
-		"Programming Language :: Python :: 2",
 		"Programming Language :: Python :: 3",
 		"Topic :: Multimedia :: Graphics",
 		"Topic :: Software Development :: Libraries :: Python Modules",
@@ -66,7 +66,7 @@ Features
 
 Core features:
 
-* Available in 6 programming languages, all with nearly equal functionality: Java, JavaScript, Python, C++, C, Rust
+* Available in 6 programming languages, all with nearly equal functionality: Java, TypeScript/JavaScript, Python, Rust, C++, C
 * Significantly shorter code but more documentation comments compared to competing libraries
 * Supports encoding all 40 versions (sizes) and all 4 error correction levels, as per the QR Code Model 2 standard
 * Output formats: Raw modules/pixels of the QR symbol, SVG XML string
@@ -88,6 +88,8 @@ Install this package by downloading the source code ZIP file from PyPI_, or by r
 
 Examples:
 
+::
+
     from qrcodegen import *
     
     # Simple operation
@@ -97,11 +99,9 @@ Examples:
     # Manual operation
     segs = QrSegment.make_segments("3141592653589793238462643383")
     qr1 = QrCode.encode_segments(segs, QrCode.Ecc.HIGH, 5, 5, 2, False)
-    border = 4
-    for y in range(-border, qr1.get_size() + border):
-        for x in range(-border, qr1.get_size() + border):
-            color = qr1.get_module(x, y)  # False for white, True for black
-            # (... paint the module onto pixels ...)
+    for y in range(qr1.get_size()):
+        for x in range(qr1.get_size()):
+            (... paint qr1.get_module(x, y) ...)
 
 More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/python/qrcodegen-demo.py .
 

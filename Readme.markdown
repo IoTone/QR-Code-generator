@@ -15,10 +15,11 @@ Features
 
 Core features:
 
-* Available in 6 programming languages, all with nearly equal functionality: Java, JavaScript, Python, C++, C, Rust
+* Available in 6 programming languages, all with nearly equal functionality: Java, TypeScript/JavaScript, Python, Rust, C++, C
 * Significantly shorter code but more documentation comments compared to competing libraries
 * Supports encoding all 40 versions (sizes) and all 4 error correction levels, as per the QR Code Model 2 standard
-* Output formats: Raw modules/pixels of the QR symbol (all languages), SVG XML string (all languages except C), `BufferedImage` raster bitmap (Java only), HTML5 canvas (JavaScript only)
+* Output formats: Raw modules/pixels of the QR symbol (all languages), SVG XML string (all languages except C), `BufferedImage` raster bitmap (Java only), HTML5 canvas (TypeScript/JavaScript only)
+* Detects finder-like penalty patterns more accurately than other implementations
 * Encodes numeric and special-alphanumeric text in less space than general text
 * Open source code under the permissive MIT License
 
@@ -27,12 +28,14 @@ Manual parameters:
 * User can specify minimum and maximum version numbers allowed, then library will automatically choose smallest version in the range that fits the data
 * User can specify mask pattern manually, otherwise library will automatically evaluate all 8 masks and select the optimal one
 * User can specify absolute error correction level, or allow the library to boost it if it doesn't increase the version number
-* User can create a list of data segments manually and add ECI segments (all languages except C)
+* User can create a list of data segments manually and add ECI segments
 
 Optional advanced features (Java only):
 
 * Encodes Japanese Unicode text in kanji mode to save a lot of space compared to UTF-8 bytes
-* Computes optimal segment mode switching for text with mixed numeric/alphanumeric/general parts
+* Computes optimal segment mode switching for text with mixed numeric/alphanumeric/general/kanji parts
+
+More information about QR Code technology and this library's design can be found on the project home page.
 
 
 Examples
@@ -42,6 +45,7 @@ Java language:
 
     import java.awt.image.BufferedImage;
     import java.io.File;
+    import java.util.List;
     import javax.imageio.ImageIO;
     import io.nayuki.qrcodegen.*;
     
@@ -59,7 +63,7 @@ Java language:
         }
     }
 
-JavaScript language:
+TypeScript/JavaScript languages:
 
     // Name abbreviated for the sake of these examples here
     var QRC = qrcodegen.QrCode;
@@ -152,28 +156,26 @@ Rust language:
     use qrcodegen::QrSegment;
     
     // Simple operation
-    let qr0 = QrCode::encode_text("Hello, world!",
+    let qr = QrCode::encode_text("Hello, world!",
         QrCodeEcc::Medium).unwrap();
-    let svg = qr0.to_svg_string(4);
+    let svg = qr.to_svg_string(4);
     
     // Manual operation
     let chrs: Vec<char> = "3141592653589793238462643383".chars().collect();
     let segs = QrSegment::make_segments(&chrs);
-    let qr1 = QrCode::encode_segments_advanced(
-        &segs, QrCodeEcc::High, 5, 5, Some(2), false).unwrap();
-    for y in 0 .. qr1.size() {
-        for x in 0 .. qr1.size() {
-            (... paint qr1.get_module(x, y) ...)
+    let qr = QrCode::encode_segments_advanced(
+        &segs, QrCodeEcc::High, 5, 5, Some(Mask::new(2)), false).unwrap();
+    for y in 0 .. qr.size() {
+        for x in 0 .. qr.size() {
+            (... paint qr.get_module(x, y) ...)
         }
     }
-
-More information about QR Code technology and this library's design can be found on the project home page.
 
 
 License
 -------
 
-Copyright © 2017 Project Nayuki. (MIT License)  
+Copyright © 2020 Project Nayuki. (MIT License)  
 [https://www.nayuki.io/page/qr-code-generator-library](https://www.nayuki.io/page/qr-code-generator-library)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
