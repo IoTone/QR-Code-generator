@@ -220,7 +220,16 @@ public:
         */
         bool encodeBinary(uint8_t[] dataAndTemp, size_t dataLen, uint8_t[] qrcode,
             QRCodegenEcc ecl, int minVersion, int maxVersion, QRCodegenMask mask, bool boostEcl) {
-            return false;
+            QRCodegenSegment[1] seg;
+            seg[0].mode = QRCodegenMode.BYTE;
+            seg[0].bitLength = this.calcSegmentBitLength(seg[0].mode, dataLen);
+            if (seg[0].bitLength == -1) {
+                qrcode[0] = 0;  // Set size to invalid value for safety
+                return false;
+            }
+            seg[0].numChars = cast(int)dataLen;
+            seg[0].data = cast(ubyte*)dataAndTemp;
+            return this.encodeSegmentsAdvanced(seg, 1, ecl, minVersion, maxVersion, mask, boostEcl, dataAndTemp, qrcode);
         }
 
 
@@ -262,7 +271,84 @@ public:
         */
         bool encodeSegmentsAdvanced(const QRCodegenSegment[] segs, size_t len, QRCodegenEcc ecl,
             int minVersion, int maxVersion, QRCodegenMask mask, bool boostEcl, uint8_t[] tempBuffer, uint8_t[] qrcode) {
-            return false;
+            assert(segs != null || len == 0);
+            assert(QRCODEGEN_VERSION_MIN <= minVersion && minVersion <= maxVersion && maxVersion <= QRCODEGEN_VERSION_MAX);
+            assert(0 <= cast(int)ecl && cast(int)ecl <= 3 && -1 <= cast(int)mask && cast(int)mask <= 7);
+            
+            // Find the minimal version number to use
+            int vers, dataUsedBits;
+            for (vers = minVersion; ; vers++) {
+                int dataCapacityBits = this.getNumDataCodewords(vers, ecl) * 8;  // Number of data bits available
+                dataUsedBits = this.getTotalBits(segs, len, vers);
+                if (dataUsedBits != -1 && dataUsedBits <= dataCapacityBits)
+                    break;  // This version number is found to be suitable
+                if (vers >= maxVersion) {  // All versions in the range could not fit the given data
+                    qrcode[0] = 0;  // Set size to invalid value for safety
+                    return false;
+                }
+            }
+            assert(dataUsedBits != -1);
+            
+            // Increase the error correction level while the data still fits in the current version number
+            for (int i = cast(int)qrcodegen_Ecc_MEDIUM; i <= cast(int)qrcodegen_Ecc_HIGH; i++) {  // From low to high
+                if (boostEcl && dataUsedBits <= this.getNumDataCodewords(vers, cast(QRCodegenEcc)i) * 8)
+                    ecl = cast(QRCodegenEcc)i;
+            }
+            
+            // Concatenate all segments to create the data bit string
+            memset(qrcode, 0, cast(size_t)qrcodegen_BUFFER_LEN_FOR_VERSION(vers) * sizeof(qrcode[0]));
+            int bitLen = 0;
+            for (size_t i = 0; i < len; i++) {
+                const QRCodegenSegment *seg = &segs[i];
+                this.appendBitsToBuffer(cast(uint)seg.mode, 4, qrcode, &bitLen);
+                this.appendBitsToBuffer(cast(uint)seg.numChars, numCharCountBits(seg.mode, vers), qrcode, &bitLen);
+                for (int j = 0; j < seg.bitLength; j++) {
+                    int bit = (seg.data[j >> 3] >> (7 - (j & 7))) & 1;
+                    this.appendBitsToBuffer(cast(uint)bit, 1, qrcode, &bitLen);
+                }
+            }
+            assert(bitLen == dataUsedBits);
+            
+            // Add terminator and pad up to a byte if applicable
+            int dataCapacityBits = this.getNumDataCodewords(vers, ecl) * 8;
+            assert(bitLen <= dataCapacityBits);
+            int terminatorBits = dataCapacityBits - bitLen;
+            if (terminatorBits > 4)
+                terminatorBits = 4;
+            this.appendBitsToBuffer(0, terminatorBits, qrcode, &bitLen);
+            this.appendBitsToBuffer(0, (8 - bitLen % 8) % 8, qrcode, &bitLen);
+            assert(bitLen % 8 == 0);
+            
+            // Pad with alternating bytes until data capacity is reached
+            for (uint8_t padByte = 0xEC; bitLen < dataCapacityBits; padByte ^= 0xEC ^ 0x11)
+                this.appendBitsToBuffer(padByte, 8, qrcode, &bitLen);
+            
+            // Draw function and data codeword modules
+            this.addEccAndInterleave(qrcode, vers, ecl, tempBuffer);
+            this.initializeFunctionModules(vers, qrcode);
+            this.drawCodewords(tempBuffer, getNumRawDataModules(vers) / 8, qrcode);
+            this.drawWhiteFunctionModules(qrcode, vers);
+            this.initializeFunctionModules(vers, tempBuffer);
+            
+            // Handle masking
+            if (mask == QRCodegenMask.AUTO) {  // Automatically choose best mask
+                long minPenalty = LONG_MAX;
+                for (int i = 0; i < 8; i++) {
+                    enum qrcodegen_Mask msk = cast(QRCodegenMask)i;
+                    this.pplyMask(tempBuffer, qrcode, msk);
+                    this.drawFormatBits(ecl, msk, qrcode);
+                    long penalty = this.getPenaltyScore(qrcode);
+                    if (penalty < minPenalty) {
+                        mask = msk;
+                        minPenalty = penalty;
+                    }
+                    this.applyMask(tempBuffer, qrcode, msk);  // Undoes the mask due to XOR
+                }
+            }
+            assert(0 <= cast(int)mask && cast(int)mask <= 7);
+            this.applyMask(tempBuffer, qrcode, mask);
+            this.drawFormatBits(ecl, mask, qrcode);
+            return true;
         }
 
 
@@ -369,6 +455,40 @@ public:
         }
 
         private:
+        /*---- Private tables of constants ----*/
+
+        // The set of all legal characters in alphanumeric mode, where each character
+        // value maps to the index in the string. For checking text and encoding segments.
+        static const string ALPHANUMERIC_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+
+        // For generating error correction codes.
+        const int8_t[41][4] ECC_CODEWORDS_PER_BLOCK = [
+            // Version: (note that index 0 is for padding, and is set to an illegal value)
+            //0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40    Error correction level
+            [-1,  7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],  // Low
+            [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],  // Medium
+            [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],  // Quartile
+            [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],  // High
+        ];
+
+        static const auto QRCODEGEN_REED_SOLOMON_DEGREE_MAX  = 30;  // Based on the table above
+
+        // For generating error correction codes.
+        const int8_t[41][4] NUM_ERROR_CORRECTION_BLOCKS = [
+            // Version: (note that index 0 is for padding, and is set to an illegal value)
+            //0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40    Error correction level
+            [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4,  4,  4,  4,  4,  6,  6,  6,  6,  7,  8,  8,  9,  9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],  // Low
+            [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5,  5,  8,  9,  9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],  // Medium
+            [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8,  8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],  // Quartile
+            [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81],  // High
+        ];
+
+        // For automatic mask pattern selection.
+        static const int PENALTY_N1 =  3;
+        static const int PENALTY_N2 =  3;
+        static const int PENALTY_N3 = 40;
+        static const int PENALTY_N4 = 10;
+
         // Returns the number of data bits needed to represent a segment
         // containing the given number of characters using the given mode. Notes:
         // - Returns -1 on failure, i.e. numChars > INT16_MAX or
@@ -400,5 +520,15 @@ public:
             if (result > core.stdc.stdint.INT16_MAX)
                 return -1;
             return cast(int)result;
+        }
+
+        // Returns the number of 8-bit codewords that can be used for storing data (not ECC),
+        // for the given version number and error correction level. The result is in the range [9, 2956].
+        int getNumDataCodewords(int vers, QRCodegenEcc ecl) {
+            int v = vers, e = cast(int)ecl;
+            assert(0 <= e && e < 4);
+            return getNumRawDataModules(v) / 8
+                - ECC_CODEWORDS_PER_BLOCK    [e][v]
+                * NUM_ERROR_CORRECTION_BLOCKS[e][v];
         }
     }
