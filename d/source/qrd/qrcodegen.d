@@ -25,6 +25,8 @@ module qrd.qrcodegen;
 import std.stdint;
 // import std.bitmanip;
 import core.stdc.stdint;
+import core.stdc.string;
+
 /* 
  * This library creates QR Code symbols, which is a type of two-dimension barcode.
  * Invented by Denso Wave and described in the ISO/IEC 18004 standard.
@@ -290,16 +292,17 @@ public:
             assert(dataUsedBits != -1);
             
             // Increase the error correction level while the data still fits in the current version number
-            for (int i = cast(int)qrcodegen_Ecc_MEDIUM; i <= cast(int)qrcodegen_Ecc_HIGH; i++) {  // From low to high
+            for (int i = cast(int)QRCodegenEcc.MEDIUM; i <= cast(int)QRCodegenEcc.HIGH; i++) {  // From low to high
                 if (boostEcl && dataUsedBits <= this.getNumDataCodewords(vers, cast(QRCodegenEcc)i) * 8)
                     ecl = cast(QRCodegenEcc)i;
             }
             
             // Concatenate all segments to create the data bit string
-            memset(qrcode, 0, cast(size_t)qrcodegen_BUFFER_LEN_FOR_VERSION(vers) * sizeof(qrcode[0]));
+            memset(&qrcode, 0, cast(size_t)BUFFER_LEN_FOR_VERSION(vers) * qrcode[0].sizeof);
             int bitLen = 0;
             for (size_t i = 0; i < len; i++) {
                 const QRCodegenSegment *seg = &segs[i];
+                // (ubyte val, int numBits, ubyte[] buffer, int* bitLen) is not callable using argument types (uint, int, ubyte[], int*)
                 this.appendBitsToBuffer(cast(uint)seg.mode, 4, qrcode, &bitLen);
                 this.appendBitsToBuffer(cast(uint)seg.numChars, numCharCountBits(seg.mode, vers), qrcode, &bitLen);
                 for (int j = 0; j < seg.bitLength; j++) {
@@ -332,7 +335,7 @@ public:
             
             // Handle masking
             if (mask == QRCodegenMask.AUTO) {  // Automatically choose best mask
-                long minPenalty = LONG_MAX;
+                long minPenalty = core.stdc.stdint.LONG_MAX;
                 for (int i = 0; i < 8; i++) {
                     enum qrcodegen_Mask msk = cast(QRCodegenMask)i;
                     this.pplyMask(tempBuffer, qrcode, msk);
@@ -530,5 +533,51 @@ public:
             return getNumRawDataModules(v) / 8
                 - ECC_CODEWORDS_PER_BLOCK    [e][v]
                 * NUM_ERROR_CORRECTION_BLOCKS[e][v];
+        }
+
+        // Calculates the number of bits needed to encode the given segments at the given version.
+        // Returns a non-negative number if successful. Otherwise returns -1 if a segment has too
+        // many characters to fit its length field, or the total bits exceeds INT16_MAX.
+        int getTotalBits(const QRCodegenSegment[] segs, size_t len, int vers) {
+            assert(segs != NULL || len == 0);
+            long result = 0;
+            for (size_t i = 0; i < len; i++) {
+                int numChars  = segs[i].numChars;
+                int bitLength = segs[i].bitLength;
+                assert(0 <= numChars  && numChars  <= core.stdc.stdint.INT16_MAX);
+                assert(0 <= bitLength && bitLength <= core.stdc.stdint.INT16_MAX);
+                int ccbits = numCharCountBits(segs[i].mode, vers);
+                assert(0 <= ccbits && ccbits <= 16);
+                if (numChars >= (1L << ccbits))
+                    return -1;  // The segment's length doesn't fit the field's bit width
+                result += 4L + ccbits + bitLength;
+                if (result > core.stdc.stdint.INT16_MAX)
+                    return -1;  // The sum might overflow an int type
+            }
+            assert(0 <= result && result <= core.stdc.stdint.INT16_MAX);
+            return cast(int)result;
+        }
+
+        // Appends the given number of low-order bits of the given value to the given byte-based
+        // bit buffer, increasing the bit length. Requires 0 <= numBits <= 16 and val < 2^numBits.
+        void appendBitsToBuffer(uint val, int numBits, uint8_t[] buffer, int *bitLen) {
+            assert(0 <= numBits && numBits <= 16 && cast(ulong)val >> numBits == 0);
+            for (int i = numBits - 1; i >= 0; i--, (*bitLen)++)
+                buffer[*bitLen >> 3] |= ((val >> i) & 1) << (7 - (*bitLen & 7));
+        }
+
+        // Returns the bit width of the character count field for a segment in the given mode
+        // in a QR Code at the given version number. The result is in the range [0, 16].
+        static int numCharCountBits(QRCodegenMode mode, int vers) {
+            assert(QRCODEGEN_VERSION_MIN <= vers && vers <= QRCODEGEN_VERSION_MAX);
+            int i = (vers + 7) / 17;
+            switch (mode) {
+                case QRCodegenMode. NUMERIC     : { static const int[] temp = {10, 12, 14}; return temp[i]; }
+                case QRCodegenMode.ALPHANUMERIC: { static const int[] temp = { 9, 11, 13}; return temp[i]; }
+                case QRCodegenMode.BYTE        : { static const int[] temp = { 8, 16, 16}; return temp[i]; }
+                case QRCodegenMode.KANJI       : { static const int[] temp = { 8, 10, 12}; return temp[i]; }
+                case QRCodegenMode.ECI         : return 0;
+                default:  assert(false);  return -1;  // Dummy value
+            }
         }
     }
