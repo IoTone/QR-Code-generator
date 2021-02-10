@@ -580,4 +580,76 @@ public:
                 default:  assert(false);  return -1;  // Dummy value
             }
         }
+
+        /*---- Error correction code generation functions ----*/
+        // Appends error correction bytes to each block of the given data array, then interleaves
+        // bytes from the blocks and stores them in the result array. data[0 : dataLen] contains
+        // the input data. data[dataLen : rawCodewords] is used as a temporary work area and will
+        // be clobbered by this function. The final answer is stored in result[0 : rawCodewords].
+        void addEccAndInterleave(uint8_t[] data, int vers, QRCodegenEcc ecl, uint8_t[] result) {
+            // Calculate parameter numbers
+            assert(0 <= cast(int)ecl && cast(int)ecl < 4 && QRCODEGEN_VERSION_MIN <= vers && vers <= QRCODEGEN_VERSION_MAX);
+            int numBlocks = NUM_ERROR_CORRECTION_BLOCKS[cast(int)ecl][vers];
+            int blockEccLen = ECC_CODEWORDS_PER_BLOCK  [cast(int)ecl][vers];
+            int rawCodewords = getNumRawDataModules(vers) / 8;
+            int dataLen = getNumDataCodewords(vers, ecl);
+            int numShortBlocks = numBlocks - rawCodewords % numBlocks;
+            int shortBlockDataLen = rawCodewords / numBlocks - blockEccLen;
+            
+            // Split data into blocks, calculate ECC, and interleave
+            // (not concatenate) the bytes into a single sequence
+            uint8_t[QRCODEGEN_REED_SOLOMON_DEGREE_MAX] rsdiv;
+            reedSolomonComputeDivisor(blockEccLen, rsdiv);
+            const uint8_t *dat = data;
+            for (int i = 0; i < numBlocks; i++) {
+                int datLen = shortBlockDataLen + (i < numShortBlocks ? 0 : 1);
+                uint8_t *ecc = &data[dataLen];  // Temporary storage
+                reedSolomonComputeRemainder(dat, datLen, rsdiv, blockEccLen, ecc);
+                for (int j = 0, k = i; j < datLen; j++, k += numBlocks) {  // Copy data
+                    if (j == shortBlockDataLen)
+                        k -= numShortBlocks;
+                    result[k] = dat[j];
+                }
+                for (int j = 0, k = dataLen + i; j < blockEccLen; j++, k += numBlocks)  // Copy ECC
+                    result[k] = ecc[j];
+                dat += datLen;
+            }
+        }
+
+        /*---- Drawing function modules ----*/
+
+    // Clears the given QR Code grid with white modules for the given
+    // version's size, then marks every function module as black.
+    void initializeFunctionModules(int vers, uint8_t qrcode[]) {
+        // Initialize QR Code
+        int qrsize = vers * 4 + 17;
+        memset(qrcode, 0, (size_t)((qrsize * qrsize + 7) / 8 + 1) * sizeof(qrcode[0]));
+        qrcode[0] = (uint8_t)qrsize;
+        
+        // Fill horizontal and vertical timing patterns
+        fillRectangle(6, 0, 1, qrsize, qrcode);
+        fillRectangle(0, 6, qrsize, 1, qrcode);
+        
+        // Fill 3 finder patterns (all corners except bottom right) and format bits
+        fillRectangle(0, 0, 9, 9, qrcode);
+        fillRectangle(qrsize - 8, 0, 8, 9, qrcode);
+        fillRectangle(0, qrsize - 8, 9, 8, qrcode);
+        
+        // Fill numerous alignment patterns
+        uint8_t alignPatPos[7];
+        int numAlign = getAlignmentPatternPositions(vers, alignPatPos);
+        for (int i = 0; i < numAlign; i++) {
+            for (int j = 0; j < numAlign; j++) {
+                // Don't draw on the three finder corners
+                if (!((i == 0 && j == 0) || (i == 0 && j == numAlign - 1) || (i == numAlign - 1 && j == 0)))
+                    fillRectangle(alignPatPos[i] - 2, alignPatPos[j] - 2, 5, 5, qrcode);
+            }
+        }
+        
+        // Fill version blocks
+        if (vers >= 7) {
+            fillRectangle(qrsize - 11, 0, 3, 6, qrcode);
+            fillRectangle(0, qrsize - 11, 6, 3, qrcode);
+        }
+    }
     }
