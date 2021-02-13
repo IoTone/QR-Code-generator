@@ -335,7 +335,7 @@ public:
             
             // Handle masking
             if (mask == QRCodegenMask.AUTO) {  // Automatically choose best mask
-                long minPenalty = core.stdc.stdint.LONG_MAX;
+                long minPenalty = long.max;
                 for (int i = 0; i < 8; i++) {
                     enum qrcodegen_Mask msk = cast(QRCodegenMask)i;
                     this.pplyMask(tempBuffer, qrcode, msk);
@@ -539,7 +539,7 @@ public:
         // Returns a non-negative number if successful. Otherwise returns -1 if a segment has too
         // many characters to fit its length field, or the total bits exceeds INT16_MAX.
         int getTotalBits(const QRCodegenSegment[] segs, size_t len, int vers) {
-            assert(segs != NULL || len == 0);
+            assert(segs != null || len == 0);
             long result = 0;
             for (size_t i = 0; i < len; i++) {
                 int numChars  = segs[i].numChars;
@@ -571,13 +571,21 @@ public:
         static int numCharCountBits(QRCodegenMode mode, int vers) {
             assert(QRCODEGEN_VERSION_MIN <= vers && vers <= QRCODEGEN_VERSION_MAX);
             int i = (vers + 7) / 17;
-            switch (mode) {
-                case QRCodegenMode. NUMERIC     : { static const int[] temp = {10, 12, 14}; return temp[i]; }
-                case QRCodegenMode.ALPHANUMERIC: { static const int[] temp = { 9, 11, 13}; return temp[i]; }
-                case QRCodegenMode.BYTE        : { static const int[] temp = { 8, 16, 16}; return temp[i]; }
-                case QRCodegenMode.KANJI       : { static const int[] temp = { 8, 10, 12}; return temp[i]; }
-                case QRCodegenMode.ECI         : return 0;
-                default:  assert(false);  return -1;  // Dummy value
+            final switch (mode) {
+                case QRCodegenMode. NUMERIC     : 
+                    static const int[] temp1 = [10, 12, 14];
+                    return temp1[i];
+                case QRCodegenMode.ALPHANUMERIC:
+                    static const int[] temp2 = [9, 11, 13];
+                    return temp2[i];
+                case QRCodegenMode.BYTE        : 
+                    static const int[] temp3 = [8, 16, 16];
+                    return temp3[i];
+                case QRCodegenMode.KANJI       : 
+                    static const int[] temp4 = [8, 10, 12];
+                    return temp4[i];
+                case QRCodegenMode.ECI         :
+                    return 0;
             }
         }
 
@@ -620,11 +628,11 @@ public:
 
     // Clears the given QR Code grid with white modules for the given
     // version's size, then marks every function module as black.
-    void initializeFunctionModules(int vers, uint8_t qrcode[]) {
+    void initializeFunctionModules(int vers, uint8_t[] qrcode) {
         // Initialize QR Code
         int qrsize = vers * 4 + 17;
-        memset(qrcode, 0, (size_t)((qrsize * qrsize + 7) / 8 + 1) * sizeof(qrcode[0]));
-        qrcode[0] = (uint8_t)qrsize;
+        memset(qrcode, 0, cast(size_t)((qrsize * qrsize + 7) / 8 + 1) * sizeof(qrcode[0]));
+        qrcode[0] = cast(uint8_t)qrsize;
         
         // Fill horizontal and vertical timing patterns
         fillRectangle(6, 0, 1, qrsize, qrcode);
@@ -636,7 +644,7 @@ public:
         fillRectangle(0, qrsize - 8, 9, 8, qrcode);
         
         // Fill numerous alignment patterns
-        uint8_t alignPatPos[7];
+        uint8_t[7] alignPatPos;
         int numAlign = getAlignmentPatternPositions(vers, alignPatPos);
         for (int i = 0; i < numAlign; i++) {
             for (int j = 0; j < numAlign; j++) {
@@ -652,4 +660,33 @@ public:
             fillRectangle(0, qrsize - 11, 6, 3, qrcode);
         }
     }
+
+    /*---- Drawing data modules and masking ----*/
+
+    // Draws the raw codewords (including data and ECC) onto the given QR Code. This requires the initial state of
+    // the QR Code to be black at function modules and white at codeword modules (including unused remainder bits).
+    static void drawCodewords(const uint8_t[] data, int dataLen, uint8_t[] qrcode) {
+        int qrsize = qrcodegen_getSize(qrcode);
+        int i = 0;  // Bit index into the data
+        // Do the funny zigzag scan
+        for (int right = qrsize - 1; right >= 1; right -= 2) {  // Index of right column in each column pair
+            if (right == 6)
+                right = 5;
+            for (int vert = 0; vert < qrsize; vert++) {  // Vertical counter
+                for (int j = 0; j < 2; j++) {
+                    int x = right - j;  // Actual x coordinate
+                    bool upward = ((right + 1) & 2) == 0;
+                    int y = upward ? qrsize - 1 - vert : vert;  // Actual y coordinate
+                    if (!getModule(qrcode, x, y) && i < dataLen * 8) {
+                        bool black = getBit(data[i >> 3], 7 - (i & 7));
+                        setModule(qrcode, x, y, black);
+                        i++;
+                    }
+                    // If this QR Code has any remainder bits (0 to 7), they were assigned as
+                    // 0/false/white by the constructor and are left unchanged by this method
+                }
+            }
+        }
+        assert(i == dataLen * 8);
     }
+}
