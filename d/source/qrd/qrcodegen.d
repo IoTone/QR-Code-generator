@@ -612,6 +612,8 @@ public:
             for (int i = 0; i < numBlocks; i++) {
                 int datLen = shortBlockDataLen + (i < numShortBlocks ? 0 : 1);
                 uint8_t *ecc = &data[dataLen];  // Temporary storage
+                // const(ubyte[]) data, int dataLen, const(ubyte[]) generator, int degree, ubyte[] result)
+                // (const(ubyte*), int, ubyte[30], int, ubyte*)
                 reedSolomonComputeRemainder(dat, datLen, rsdiv, blockEccLen, ecc);
                 for (int j = 0, k = i; j < datLen; j++, k += numBlocks) {  // Copy data
                     if (j == shortBlockDataLen)
@@ -934,8 +936,8 @@ public:
     // Computes the Reed-Solomon error correction codeword for the given data and divisor polynomials.
     // The remainder when data[0 : dataLen] is divided by divisor[0 : degree] is stored in result[0 : degree].
     // All polynomials are in big endian, and the generator has an implicit leading 1 term.
-    void reedSolomonComputeRemainder(const uint8_t[] data, int dataLen,
-            const uint8_t[] generator, int degree, uint8_t[] result) {
+    void reedSolomonComputeRemainder(const uint8_t* data, int dataLen,
+            const uint8_t[] generator, int degree, uint8_t* result) {
         assert(1 <= degree && degree <= qrcodegen_REED_SOLOMON_DEGREE_MAX);
         memset(result, 0, cast(size_t)degree * sizeof(result[0]));
         for (int i = 0; i < dataLen; i++) {  // Polynomial division
