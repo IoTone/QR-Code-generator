@@ -608,7 +608,7 @@ public:
             // (not concatenate) the bytes into a single sequence
             uint8_t[QRCODEGEN_REED_SOLOMON_DEGREE_MAX] rsdiv;
             reedSolomonComputeDivisor(blockEccLen, rsdiv);
-            const uint8_t *dat = cast(uint8_t*) data;
+            uint8_t *dat = cast(uint8_t*) data;
             for (int i = 0; i < numBlocks; i++) {
                 int datLen = shortBlockDataLen + (i < numShortBlocks ? 0 : 1);
                 uint8_t *ecc = &data[dataLen];  // Temporary storage
@@ -633,7 +633,7 @@ public:
     void initializeFunctionModules(int vers, uint8_t[] qrcode) {
         // Initialize QR Code
         int qrsize = vers * 4 + 17;
-        memset(qrcode, 0, cast(size_t)((qrsize * qrsize + 7) / 8 + 1) * sizeof(qrcode[0]));
+        memset(&qrcode, 0, cast(size_t)((qrsize * qrsize + 7) / 8 + 1) * qrcode[0].sizeof);
         qrcode[0] = cast(uint8_t)qrsize;
         
         // Fill horizontal and vertical timing patterns
@@ -660,6 +660,14 @@ public:
         if (vers >= 7) {
             fillRectangle(qrsize - 11, 0, 3, 6, qrcode);
             fillRectangle(0, qrsize - 11, 6, 3, qrcode);
+        }
+    }
+
+    // Sets every pixel in the range [left : left + width] * [top : top + height] to black.
+    static void fillRectangle(int left, int top, int width, int height, uint8_t[] qrcode) {
+        for (int dy = 0; dy < height; dy++) {
+            for (int dx = 0; dx < width; dx++)
+                setModule(qrcode, left + dx, top + dy, true);
         }
     }
 
@@ -915,7 +923,7 @@ public:
         assert(1 <= degree && degree <= QRCODEGEN_REED_SOLOMON_DEGREE_MAX);
         // Polynomial coefficients are stored from highest to lowest power, excluding the leading term which is always 1.
         // For example the polynomial x^3 + 255x^2 + 8x + 93 is stored as the uint8 array {255, 8, 93}.
-        memset(result, 0, cast(size_t)degree * sizeof(result[0]));
+        memset(result, 0, cast(size_t)degree * result[0].sizeof);
         result[degree - 1] = 1;  // Start off with the monomial x^0
         
         // Compute the product polynomial (x - r^0) * (x - r^1) * (x - r^2) * ... * (x - r^{degree-1}),
@@ -939,10 +947,10 @@ public:
     void reedSolomonComputeRemainder(const uint8_t* data, int dataLen,
             const uint8_t[] generator, int degree, uint8_t* result) {
         assert(1 <= degree && degree <= qrcodegen_REED_SOLOMON_DEGREE_MAX);
-        memset(result, 0, cast(size_t)degree * sizeof(result[0]));
+        memset(result, 0, cast(size_t)degree * result[0].sizeof);
         for (int i = 0; i < dataLen; i++) {  // Polynomial division
             uint8_t factor = data[i] ^ result[0];
-            memmove(&result[0], &result[1], cast(size_t)(degree - 1) * sizeof(result[0]));
+            memmove(&result[0], &result[1], cast(size_t)(degree - 1) * result[0].sizeof);
             result[degree - 1] = 0;
             for (int j = 0; j < degree; j++)
                 result[j] ^= reedSolomonMultiply(generator[j], factor);
