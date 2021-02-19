@@ -26,6 +26,7 @@ import std.stdint;
 // import std.bitmanip;
 import core.stdc.stdint;
 import core.stdc.string;
+import std.math;
 
 /* 
  * This library creates QR Code symbols, which is a type of two-dimension barcode.
@@ -443,8 +444,12 @@ public:
         * is related to the side length - every 'uint8_t qrcode[]' must have length at least
         * qrcodegen_BUFFER_LEN_FOR_VERSION(version), which equals ceil(size^2 / 8 + 1).
         */
-        int getSize(const uint8_t[] qrcode) {
-            return 0;
+        static int getSize(const uint8_t[] qrcode) {
+            assert(qrcode != null);
+            int result = qrcode[0];
+            assert((QRCODEGEN_VERSION_MIN * 4 + 17) <= result
+                && result <= (QRCODEGEN_VERSION_MAX * 4 + 17));
+            return result;
         }
 
 
@@ -453,9 +458,40 @@ public:
         * for white or true for black. The top left corner has the coordinates (x=0, y=0).
         * If the given coordinates are out of bounds, then false (white) is returned.
         */
-        bool getModule(const uint8_t[] qrcode, int x, int y) {
-            return false;
+        static bool getModule(const uint8_t[] qrcode, int x, int y) {
+            int qrsize = qrcode[0];
+            assert(21 <= qrsize && qrsize <= 177 && 0 <= x && x < qrsize && 0 <= y && y < qrsize);
+            int index = y * qrsize + x;
+	        return getBit(qrcode[(index >> 3) + 1], index & 7);
         }
+
+        // Sets the module at the given coordinates, which must be in bounds.
+        static void setModule(uint8_t[] qrcode, int x, int y, bool isBlack) {
+            int qrsize = qrcode[0];
+            assert(21 <= qrsize && qrsize <= 177 && 0 <= x && x < qrsize && 0 <= y && y < qrsize);
+            int index = y * qrsize + x;
+            int bitIndex = index & 7;
+            int byteIndex = (index >> 3) + 1;
+            if (isBlack)
+                qrcode[byteIndex] |= 1 << bitIndex;
+            else
+                qrcode[byteIndex] &= (1 << bitIndex) ^ 0xFF;
+        }
+
+        // Sets the module at the given coordinates, doing nothing if out of bounds.
+        static void setModuleBounded(uint8_t[] qrcode, int x, int y, bool isBlack) {
+            int qrsize = qrcode[0];
+            if (0 <= x && x < qrsize && 0 <= y && y < qrsize)
+                setModule(qrcode, x, y, isBlack);
+        }
+
+
+        // Returns true iff the i'th bit of x is set to 1. Requires x >= 0 and 0 <= i <= 14.
+        static bool getBit(int x, int i) {
+            return ((x >> i) & 1) != 0;
+        }
+
+
 
         private:
         /*---- Private tables of constants ----*/
@@ -663,6 +699,22 @@ public:
         }
     }
 
+    // Calculates and stores an ascending list of positions of alignment patterns
+    // for this version number, returning the length of the list (in the range [0,7]).
+    // Each position is in the range [0,177), and are used on both the x and y axes.
+    // This could be implemented as lookup table of 40 variable-length lists of unsigned bytes.
+    static int getAlignmentPatternPositions(int vers, uint8_t[7] result) {
+        if (vers == 1)
+            return 0;
+        int numAlign = vers / 7 + 2;
+        int step = (vers == 32) ? 26 :
+            (vers*4 + numAlign*2 + 1) / (numAlign*2 - 2) * 2;
+        for (int i = numAlign - 1, pos = vers * 4 + 10; i >= 1; i--, pos -= step)
+            result[i] = cast(uint8_t)pos;
+        result[0] = 6;
+        return numAlign;
+    }
+
     // Sets every pixel in the range [left : left + width] * [top : top + height] to black.
     static void fillRectangle(int left, int top, int width, int height, uint8_t[] qrcode) {
         for (int dy = 0; dy < height; dy++) {
@@ -676,7 +728,7 @@ public:
     // Draws the raw codewords (including data and ECC) onto the given QR Code. This requires the initial state of
     // the QR Code to be black at function modules and white at codeword modules (including unused remainder bits).
     static void drawCodewords(const uint8_t[] data, int dataLen, uint8_t[] qrcode) {
-        int qrsize = qrcodegen_getSize(qrcode);
+        int qrsize = getSize(qrcode);
         int i = 0;  // Bit index into the data
         // Do the funny zigzag scan
         for (int right = qrsize - 1; right >= 1; right -= 2) {  // Index of right column in each column pair
@@ -721,7 +773,7 @@ public:
     // marked black (namely by initializeFunctionModules()), because this may skip redrawing black function modules.
     static void drawWhiteFunctionModules(uint8_t[] qrcode, int vers) {
         // Draw horizontal and vertical timing patterns
-        int qrsize = qrcodegen_getSize(qrcode);
+        int qrsize = getSize(qrcode);
         for (int i = 7; i < qrsize - 7; i += 2) {
             setModule(qrcode, 6, i, false);
             setModule(qrcode, i, 6, false);
@@ -783,7 +835,7 @@ public:
     // QR Code needs exactly one (not zero, two, etc.) mask applied.
     static void applyMask(const uint8_t[] functionModules, uint8_t[] qrcode, QRCodegenMask mask) {
         assert(0 <= cast(int)mask && cast(int)mask <= 7);  // Disallows qrcodegen_Mask_AUTO
-        int qrsize = qrcodegen_getSize(qrcode);
+        int qrsize = getSize(qrcode);
         for (int y = 0; y < qrsize; y++) {
             for (int x = 0; x < qrsize; x++) {
                 if (getModule(functionModules, x, y))
@@ -798,7 +850,7 @@ public:
                     case 5:  invert = x * y % 2 + x * y % 3 == 0;          break;
                     case 6:  invert = (x * y % 2 + x * y % 3) % 2 == 0;    break;
                     case 7:  invert = ((x + y) % 2 + x * y % 3) % 2 == 0;  break;
-                    default:  assert(false);  return;
+                    default: return;
                 }
                 bool val = getModule(qrcode, x, y);
                 setModule(qrcode, x, y, val ^ invert);
@@ -812,7 +864,7 @@ public:
     static void drawFormatBits(QRCodegenEcc ecl, QRCodegenMask mask, uint8_t[] qrcode) {
         // Calculate error correction code and pack bits
         assert(0 <= cast(int)mask && cast(int)mask <= 7);
-        static const int[] table = {1, 0, 3, 2};
+        static const int[] table = [1, 0, 3, 2];
         int data = table[cast(int)ecl] << 3 | cast(int)mask;  // errCorrLvl is uint2, mask is uint3
         int rem = data;
         for (int i = 0; i < 10; i++)
@@ -830,7 +882,7 @@ public:
             setModule(qrcode, 14 - i, 8, getBit(bits, i));
         
         // Draw second copy
-        int qrsize = qrcodegen_getSize(qrcode);
+        int qrsize = getSize(qrcode);
         for (int i = 0; i < 8; i++)
             setModule(qrcode, qrsize - 1 - i, 8, getBit(bits, i));
         for (int i = 8; i < 15; i++)
@@ -841,14 +893,14 @@ public:
     // Calculates and returns the penalty score based on state of the given QR Code's current modules.
     // This is used by the automatic mask choice algorithm to find the mask pattern that yields the lowest score.
     static long getPenaltyScore(const uint8_t[] qrcode) {
-        int qrsize = qrcodegen_getSize(qrcode);
+        int qrsize = getSize(qrcode);
         long result = 0;
         
         // Adjacent modules in row having same color, and finder-like patterns
         for (int y = 0; y < qrsize; y++) {
             bool runColor = false;
             int runX = 0;
-            int[7] runHistory = {0};
+            int[7] runHistory;
             for (int x = 0; x < qrsize; x++) {
                 if (getModule(qrcode, x, y) == runColor) {
                     runX++;
