@@ -435,7 +435,37 @@ public:
             return seg;
         }
 
+        // Can only be called immediately after a white run is added, and
+        // returns either 0, 1, or 2. A helper function for getPenaltyScore().
+        static int finderPenaltyCountPatterns(const int[7] runHistory, int qrsize) {
+            int n = runHistory[1];
+            assert(n <= qrsize * 3);
+            bool core = n > 0 && runHistory[2] == n && runHistory[3] == n * 3 && runHistory[4] == n && runHistory[5] == n;
+            // The maximum QR Code size is 177, hence the black run length n <= 177.
+            // Arithmetic is promoted to int, so n*4 will not overflow.
+            return (core && runHistory[0] >= n * 4 && runHistory[6] >= n ? 1 : 0)
+                + (core && runHistory[6] >= n * 4 && runHistory[0] >= n ? 1 : 0);
+        }
 
+
+        // Must be called at the end of a line (row or column) of modules. A helper function for getPenaltyScore().
+        static int finderPenaltyTerminateAndCount(bool currentRunColor, int currentRunLength, int[7] runHistory, int qrsize) {
+            if (currentRunColor) {  // Terminate black run
+                finderPenaltyAddHistory(currentRunLength, runHistory, qrsize);
+                currentRunLength = 0;
+            }
+            currentRunLength += qrsize;  // Add white border to final run
+            finderPenaltyAddHistory(currentRunLength, runHistory, qrsize);
+            return finderPenaltyCountPatterns(runHistory, qrsize);
+        }
+
+        // Pushes the given value to the front and drops the last value. A helper function for getPenaltyScore().
+        static void finderPenaltyAddHistory(int currentRunLength, int[7] runHistory, int qrsize) {
+            if (runHistory[0] == 0)
+                currentRunLength += qrsize;  // Add white border to initial run
+            memmove(&runHistory[1], &runHistory[0], 6 * runHistory[0].sizeof);
+            runHistory[0] = currentRunLength;
+        }
         /*---- Functions to extract raw data from QR Codes ----*/
 
         /* 
@@ -669,7 +699,8 @@ public:
     void initializeFunctionModules(int vers, uint8_t[] qrcode) {
         // Initialize QR Code
         int qrsize = vers * 4 + 17;
-        memset(&qrcode, 0, cast(size_t)((qrsize * qrsize + 7) / 8 + 1) * qrcode[0].sizeof);
+        memset(&qrcode, 0, cast(size_t)
+        ((qrsize * qrsize + 7) / 8 + 1) * qrcode[0].sizeof);
         qrcode[0] = cast(uint8_t)qrsize;
         
         // Fill horizontal and vertical timing patterns
@@ -922,7 +953,7 @@ public:
         for (int x = 0; x < qrsize; x++) {
             bool runColor = false;
             int runY = 0;
-            int[7] runHistory = {0};
+            int[7] runHistory;
             for (int y = 0; y < qrsize; y++) {
                 if (getModule(qrcode, x, y) == runColor) {
                     runY++;
@@ -962,7 +993,7 @@ public:
         }
         int total = qrsize * qrsize;  // Note that size is odd, so black/total != 1/2
         // Compute the smallest integer k >= 0 such that (45-5k)% <= black/total <= (55+5k)%
-        int k = cast(int)((labs(black * 20L - total * 10L) + total - 1) / total) - 1;
+        int k = cast(int)((abs(black * 20L - total * 10L) + total - 1) / total) - 1;
         result += k * PENALTY_N4;
         return result;
     }
@@ -975,7 +1006,7 @@ public:
         assert(1 <= degree && degree <= QRCODEGEN_REED_SOLOMON_DEGREE_MAX);
         // Polynomial coefficients are stored from highest to lowest power, excluding the leading term which is always 1.
         // For example the polynomial x^3 + 255x^2 + 8x + 93 is stored as the uint8 array {255, 8, 93}.
-        memset(result, 0, cast(size_t)degree * result[0].sizeof);
+        memset(&result, 0, cast(size_t)degree * result[0].sizeof);
         result[degree - 1] = 1;  // Start off with the monomial x^0
         
         // Compute the product polynomial (x - r^0) * (x - r^1) * (x - r^2) * ... * (x - r^{degree-1}),
@@ -998,7 +1029,7 @@ public:
     // All polynomials are in big endian, and the generator has an implicit leading 1 term.
     void reedSolomonComputeRemainder(const uint8_t* data, int dataLen,
             const uint8_t[] generator, int degree, uint8_t* result) {
-        assert(1 <= degree && degree <= qrcodegen_REED_SOLOMON_DEGREE_MAX);
+        assert(1 <= degree && degree <= QRCODEGEN_REED_SOLOMON_DEGREE_MAX);
         memset(result, 0, cast(size_t)degree * result[0].sizeof);
         for (int i = 0; i < dataLen; i++) {  // Polynomial division
             uint8_t factor = data[i] ^ result[0];
@@ -1007,5 +1038,17 @@ public:
             for (int j = 0; j < degree; j++)
                 result[j] ^= reedSolomonMultiply(generator[j], factor);
         }
+    }
+
+    // Returns the product of the two given field elements modulo GF(2^8/0x11D).
+    // All inputs are valid. This could be implemented as a 256*256 lookup table.
+    uint8_t reedSolomonMultiply(uint8_t x, uint8_t y) {
+        // Russian peasant multiplication
+        uint8_t z = 0;
+        for (int i = 7; i >= 0; i--) {
+            z = cast(uint8_t)((z << 1) ^ ((z >> 7) * 0x11D));
+            z ^= ((y >> i) & 1) * x;
+        }
+        return z;
     }
 }
