@@ -167,7 +167,7 @@ public:
         * - Please consult the QR Code specification for information on
         *   data capacities per version, ECC level, and text encoding mode.
         */
-        bool encodeText(string text, uint8_t[] tempBuffer, uint8_t[] qrcode,
+        static bool encodeText(string text, uint8_t[] tempBuffer, uint8_t[] qrcode,
         QRCodegenEcc ecl, int minVersion, int maxVersion, QRCodegenMask mask, bool boostEcl) {
             size_t textLen = text.length;
             if (textLen == 0)

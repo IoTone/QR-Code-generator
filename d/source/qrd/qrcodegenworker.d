@@ -27,6 +27,9 @@ import qrd.qrcodegen;
 import std.stdint;
 import core.stdc.stdio;
 import core.stdc.stdlib;
+import core.stdc.string : strlen, memcpy;
+import std.conv : to;
+import std.string;
 
 int main() {
 	while (true) {
@@ -60,15 +63,16 @@ int main() {
 		// Read encoding parameters
 		int errCorLvl, minVersion, maxVersion, mask, boostEcl;
 		if (scanf("%d %d %d %d %d", &errCorLvl, &minVersion, &maxVersion, &mask, &boostEcl) != 5)
-			return -1;
+			return EXIT_FAILURE;
 		
 		// Allocate memory for QR Code
 		size_t bufferLen = cast(size_t) QRCodegen.BUFFER_LEN_FOR_VERSION(maxVersion);
+		
 		uint8_t *qrcode     = cast(uint8_t*) malloc(bufferLen * uint8_t.sizeof);
 		uint8_t *tempBuffer = cast(uint8_t*) malloc(bufferLen * uint8_t.sizeof);
 		if (qrcode == null || tempBuffer == null) {
 			perror("malloc");
-			return -1;
+			return EXIT_FAILURE;
 		}
 		
 		// Try to make QR Code symbol
@@ -78,17 +82,20 @@ int main() {
 			char *text = cast(char*) malloc((length + 1) * char.sizeof);
 			if (text == null) {
 				perror("malloc");
-				return -1;
+				return EXIT_FAILURE;
 			}
 			for (size_t i = 0; i < length; i++)
 				text[i] = cast(char)data[i];
 			text[length] = '\0';
-			ok = QRCodegen.encodeText(text, tempBuffer, qrcode, cast(QRCodegenEcc)errCorLvl,
+			auto textstr = to!string(text);
+			// (string text, ubyte* tempBuffer, ubyte* qrcode, QRCodegenEcc ecl, int minVersion, int maxVersion, QRCodegenMask mask, bool boostEcl) is not callable using argument types 
+			// (char*, ubyte*, ubyte*, QRCodegenEcc, int, int, QRCodegenMask, bool)
+			ok = QRCodegen.encodeText(textstr, cast(ubyte[])tempBuffer[0..bufferLen], cast(ubyte[])qrcode[0..bufferLen], cast(QRCodegenEcc)errCorLvl,
 				minVersion, maxVersion, cast(QRCodegenMask)mask, boostEcl == 1);
 			free(text);
 		} else if (length <= bufferLen) {
-			memcpy(tempBuffer, data, length * sizeof(data[0]));
-			ok = qrcodegen_encodeBinary(tempBuffer, length, qrcode, cast(QRCodegenEcc)errCorLvl,
+			memcpy(tempBuffer, data, length * data[0].sizeof);
+			ok = QRCodegen.encodeBinary(cast(ubyte[])tempBuffer[0..bufferLen], length, cast(ubyte[])qrcode[0..bufferLen], cast(QRCodegenEcc)errCorLvl,
 				minVersion, maxVersion, cast(QRCodegenMask)mask, boostEcl == 1);
 		} else
 			ok = false;
@@ -97,16 +104,16 @@ int main() {
 		
 		if (ok) {
 			// Print grid of modules
-			int size = qrcodegen_getSize(qrcode);
+			int size = QRCodegen.getSize(cast(ubyte[])qrcode[0..bufferLen]);
 			printf("%d\n", (size - 17) / 4);
 			for (int y = 0; y < size; y++) {
 				for (int x = 0; x < size; x++)
-					printf("%d\n", QRCodegen.getModule(qrcode, x, y) ? 1 : 0);
+					printf("%d\n", QRCodegen.getModule(cast(ubyte[])qrcode[0..bufferLen], x, y) ? 1 : 0);
 			}
 		} else
 			printf("-1\n");
 		// free(qrcode);
-		dout.fflush(stdout);
+		// dout.fflush(stdout);
 	}
-	return 0;
+	return EXIT_SUCCESS;
 }
