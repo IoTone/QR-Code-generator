@@ -14,6 +14,12 @@
 			"sourceFiles": ["source/qrd/qrcodegen.d",
 							"source/qrd/qrcodegenworker.d"
 							]
+		},
+		{
+			"name": "libqrd",
+			"targetType": "library",
+			"sourceFiles": ["source/qrd/qrcodegen.d",
+							]
 		}
 	]
 }
