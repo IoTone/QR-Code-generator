@@ -18,7 +18,7 @@
 		{
 			"name": "libqrd",
 			"targetType": "library",
-			"sourceFiles": ["source/qrd/qrcodegen.d",
+			"sourceFiles": ["source/qrd/qrcodegen.d"
 							]
 		}
 	]
