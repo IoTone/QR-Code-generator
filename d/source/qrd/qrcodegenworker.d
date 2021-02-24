@@ -32,6 +32,7 @@ import std.conv : to;
 import std.string;
 
 int main() {
+	printf("Aok\n");
 	while (true) {
 		
 		// Read data length or exit
