@@ -1,5 +1,5 @@
-QR Code generator library - Rust
-================================
+QR Code generator library - Rust, no heap
+=========================================
 
 
 Introduction
@@ -20,6 +20,7 @@ Core features:
 * Output format: Raw modules/pixels of the QR symbol
 * Detects finder-like penalty patterns more accurately than other implementations
 * Encodes numeric and special-alphanumeric text in less space than general text
+* Completely avoids heap allocation (e.g. `std::vec::Vec`), instead relying on suitably sized buffers from the caller and fixed-size stack allocations
 * Open-source code under the permissive MIT License
 
 Manual parameters:
@@ -36,24 +37,30 @@ Examples
 --------
 
 ```rust
-extern crate qrcodegen;
-use qrcodegen::Mask;
-use qrcodegen::QrCode;
-use qrcodegen::QrCodeEcc;
-use qrcodegen::QrSegment;
-use qrcodegen::Version;
+extern crate qrcodegen_no_heap;
+use qrcodegen_no_heap::Mask;
+use qrcodegen_no_heap::QrCode;
+use qrcodegen_no_heap::QrCodeEcc;
+use qrcodegen_no_heap::Version;
 
-// Simple operation
+// Text data
+let mut outbuffer  = vec![0u8; Version::MAX.buffer_len()];
+let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
 let qr = QrCode::encode_text("Hello, world!",
-    QrCodeEcc::Medium).unwrap();
+    &mut tempbuffer, &mut outbuffer, QrCodeEcc::Medium,
+    Version::MIN, Version::MAX, None, true).unwrap();
 let svg = to_svg_string(&qr, 4);  // See qrcodegen-demo
 
-// Manual operation
-let text: &str = "3141592653589793238462643383";
-let segs = QrSegment::make_segments(text);
-let qr = QrCode::encode_segments_advanced(&segs,
-    QrCodeEcc::High, Version::new(5), Version::new(5),
-    Some(Mask::new(2)), false).unwrap();
+// Binary data
+let mut outbuffer   = vec![0u8; Version::MAX.buffer_len()];
+let mut dataandtemp = vec![0u8; Version::MAX.buffer_len()];
+dataandtemp[0] = 0xE3;
+dataandtemp[1] = 0x81;
+dataandtemp[2] = 0x82;
+let qr = QrCode::encode_binary(&mut dataandtemp, 3,
+    &mut outbuffer, QrCodeEcc::High,
+    Version::new(2), Version::new(7),
+    Some(Mask::new(4)), false).unwrap();
 for y in 0 .. qr.size() {
     for x in 0 .. qr.size() {
         (... paint qr.get_module(x, y) ...)
@@ -61,4 +68,4 @@ for y in 0 .. qr.size() {
 }
 ```
 
-More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/rust/examples/qrcodegen-demo.rs .
+More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/rust-no-heap/examples/qrcodegen-demo.rs .

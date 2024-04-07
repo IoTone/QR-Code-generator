@@ -1,8 +1,8 @@
 /* 
- * QR Code generator library - Optional advanced logic (Java)
+ * Fast QR Code generator library
  * 
  * Copyright (c) Project Nayuki. (MIT License)
- * https://www.nayuki.io/page/qr-code-generator-library
+ * https://www.nayuki.io/page/fast-qr-code-generator-library
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -21,7 +21,7 @@
  *   Software.
  */
 
-package io.nayuki.qrcodegen;
+package io.nayuki.fastqrcodegen;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -29,7 +29,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
-import io.nayuki.qrcodegen.QrSegment.Mode;
+import io.nayuki.fastqrcodegen.QrSegment.Mode;
 
 
 /**
@@ -48,7 +48,7 @@ public final class QrSegmentAdvanced {
 	 * in the specified {error correction level, minimum version number, maximum version number}.
 	 * <p>This function can utilize all four text encoding modes: numeric, alphanumeric, byte (UTF-8),
 	 * and kanji. This can be considered as a sophisticated but slower replacement for {@link
-	 * QrSegment#makeSegments(CharSequence)}. This requires more input parameters because it searches a
+	 * QrSegment#makeSegments(String)}. This requires more input parameters because it searches a
 	 * range of versions, like {@link QrCode#encodeSegments(List,QrCode.Ecc,int,int,int,boolean)}.</p>
 	 * @param text the text to be encoded (not {@code null}), which can be any Unicode string
 	 * @param ecl the error correction level to use (not {@code null})
@@ -60,7 +60,7 @@ public final class QrSegmentAdvanced {
 	 * @throws IllegalArgumentException if 1 &#x2264; minVersion &#x2264; maxVersion &#x2264; 40 is violated
 	 * @throws DataTooLongException if the text fails to fit in the maxVersion QR Code at the ECL
 	 */
-	public static List<QrSegment> makeSegmentsOptimally(CharSequence text, QrCode.Ecc ecl, int minVersion, int maxVersion) {
+	public static List<QrSegment> makeSegmentsOptimally(String text, QrCode.Ecc ecl, int minVersion, int maxVersion) {
 		// Check arguments
 		Objects.requireNonNull(text);
 		Objects.requireNonNull(ecl);
@@ -103,17 +103,13 @@ public final class QrSegmentAdvanced {
 	private static Mode[] computeCharacterModes(int[] codePoints, int version) {
 		if (codePoints.length == 0)
 			throw new IllegalArgumentException();
-		if (codePoints.length > 7089)  // Upper bound is the number of characters that fit in QR Code version 40, low error correction, numeric mode
-			throw new DataTooLongException("String too long");
 		final Mode[] modeTypes = {Mode.BYTE, Mode.ALPHANUMERIC, Mode.NUMERIC, Mode.KANJI};  // Do not modify
 		final int numModes = modeTypes.length;
 		
 		// Segment header sizes, measured in 1/6 bits
 		final int[] headCosts = new int[numModes];
-		for (int i = 0; i < numModes; i++) {
+		for (int i = 0; i < numModes; i++)
 			headCosts[i] = (4 + modeTypes[i].numCharCountBits(version)) * 6;
-			assert 0 <= headCosts[i] && headCosts[i] <= (4 + 16) * 6;
-		}
 		
 		// charModes[i][j] represents the mode to encode the code point at
 		// index i such that the final segment ends in modeTypes[j] and the
@@ -134,7 +130,7 @@ public final class QrSegmentAdvanced {
 				charModes[i][0] = modeTypes[0];
 			}
 			// Extend a segment if possible
-			if (QrSegment.ALPHANUMERIC_CHARSET.indexOf(c) != -1) {  // Is alphanumeric
+			if (QrSegment.ALPHANUMERIC_MAP[c] != -1) {  // Is alphanumeric
 				curCosts[1] = prevCosts[1] + 33;  // 5.5 bits per alphanumeric char
 				charModes[i][1] = modeTypes[1];
 			}
@@ -158,10 +154,6 @@ public final class QrSegmentAdvanced {
 				}
 			}
 			
-			// A non-tight upper bound is when each of 7089 characters switches to
-			// byte mode (4-bit header + 16-bit count) and requires 4 bytes in UTF-8
-			for (int cost : curCosts)
-				assert 0 <= cost && cost <= (4 + 16 + 32) * 6 * 7089;
 			prevCosts = curCosts;
 		}
 		
@@ -223,7 +215,7 @@ public final class QrSegmentAdvanced {
 	
 	// Returns a new array of Unicode code points (effectively
 	// UTF-32 / UCS-4) representing the given UTF-16 string.
-	private static int[] toCodePoints(CharSequence s) {
+	private static int[] toCodePoints(String s) {
 		int[] result = s.codePoints().toArray();
 		for (int c : result) {
 			if (Character.isSurrogate((char)c))
@@ -257,9 +249,9 @@ public final class QrSegmentAdvanced {
 	 * @return a segment (not {@code null}) containing the text
 	 * @throws NullPointerException if the string is {@code null}
 	 * @throws IllegalArgumentException if the string contains non-encodable characters
-	 * @see #isEncodableAsKanji(CharSequence)
+	 * @see #isEncodableAsKanji(String)
 	 */
-	public static QrSegment makeKanji(CharSequence text) {
+	public static QrSegment makeKanji(String text) {
 		Objects.requireNonNull(text);
 		BitBuffer bb = new BitBuffer();
 		text.chars().forEachOrdered(c -> {
@@ -268,7 +260,7 @@ public final class QrSegmentAdvanced {
 				throw new IllegalArgumentException("String contains non-kanji-mode characters");
 			bb.appendBits(val, 13);
 		});
-		return new QrSegment(Mode.KANJI, text.length(), bb);
+		return new QrSegment(Mode.KANJI, text.length(), bb.data, bb.bitLength);
 	}
 	
 	
@@ -281,9 +273,9 @@ public final class QrSegmentAdvanced {
 	 * @param text the string to test for encodability (not {@code null})
 	 * @return {@code true} iff each character is in the kanji mode character set
 	 * @throws NullPointerException if the string is {@code null}
-	 * @see #makeKanji(CharSequence)
+	 * @see #makeKanji(String)
 	 */
-	public static boolean isEncodableAsKanji(CharSequence text) {
+	public static boolean isEncodableAsKanji(String text) {
 		Objects.requireNonNull(text);
 		return text.chars().allMatch(
 			c -> isKanji((char)c));

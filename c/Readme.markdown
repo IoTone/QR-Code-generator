@@ -1,5 +1,5 @@
-QR Code generator library - Rust
-================================
+QR Code generator library - C
+=============================
 
 
 Introduction
@@ -20,6 +20,8 @@ Core features:
 * Output format: Raw modules/pixels of the QR symbol
 * Detects finder-like penalty patterns more accurately than other implementations
 * Encodes numeric and special-alphanumeric text in less space than general text
+* Completely avoids heap allocation (`malloc()`), instead relying on suitably sized buffers from the caller and fixed-size stack allocations
+* Coded carefully to prevent memory corruption, integer overflow, platform-dependent inconsistencies, and undefined behavior; tested rigorously to confirm safety
 * Open-source code under the permissive MIT License
 
 Manual parameters:
@@ -35,30 +37,34 @@ More information about QR Code technology and this library's design can be found
 Examples
 --------
 
-```rust
-extern crate qrcodegen;
-use qrcodegen::Mask;
-use qrcodegen::QrCode;
-use qrcodegen::QrCodeEcc;
-use qrcodegen::QrSegment;
-use qrcodegen::Version;
+```c
+#include <stdbool.h>
+#include <stdint.h>
+#include "qrcodegen.h"
 
-// Simple operation
-let qr = QrCode::encode_text("Hello, world!",
-    QrCodeEcc::Medium).unwrap();
-let svg = to_svg_string(&qr, 4);  // See qrcodegen-demo
+// Text data
+uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
+uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
+bool ok = qrcodegen_encodeText("Hello, world!",
+    tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
+    qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
+    qrcodegen_Mask_AUTO, true);
+if (!ok)
+    return;
 
-// Manual operation
-let text: &str = "3141592653589793238462643383";
-let segs = QrSegment::make_segments(text);
-let qr = QrCode::encode_segments_advanced(&segs,
-    QrCodeEcc::High, Version::new(5), Version::new(5),
-    Some(Mask::new(2)), false).unwrap();
-for y in 0 .. qr.size() {
-    for x in 0 .. qr.size() {
-        (... paint qr.get_module(x, y) ...)
+int size = qrcodegen_getSize(qr0);
+for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+        (... paint qrcodegen_getModule(qr0, x, y) ...)
     }
 }
+
+// Binary data
+uint8_t dataAndTemp[qrcodegen_BUFFER_LEN_FOR_VERSION(7)]
+    = {0xE3, 0x81, 0x82};
+uint8_t qr1[qrcodegen_BUFFER_LEN_FOR_VERSION(7)];
+ok = qrcodegen_encodeBinary(dataAndTemp, 3, qr1,
+    qrcodegen_Ecc_HIGH, 2, 7, qrcodegen_Mask_4, false);
 ```
 
-More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/rust/examples/qrcodegen-demo.rs .
+More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/c/qrcodegen-demo.c .

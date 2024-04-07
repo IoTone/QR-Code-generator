@@ -4,16 +4,43 @@
 	
 	<groupId>io.nayuki</groupId>
 	<artifactId>qrcodegen</artifactId>
-	<version>1.6.0</version>
+	<version>1.8.0</version>
 	<packaging>jar</packaging>
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<maven.compiler.source>1.8</maven.compiler.source>
-		<maven.compiler.target>1.8</maven.compiler.target>
 	</properties>
+	
 	
 	<build>
 		<plugins>
+			
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>3.8.1</version>
+				<executions>
+					<execution>
+						<id>default-compile</id>
+						<configuration>
+							<release>9</release>
+						</configuration>
+					</execution>
+					<execution>
+						<id>java8-compile</id>
+						<goals>
+							<goal>compile</goal>
+						</goals>
+						<configuration>
+							<source>1.8</source>
+							<target>1.8</target>
+							<excludes>
+								<exclude>module-info.java</exclude>
+							</excludes>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-release-plugin</artifactId>
@@ -23,6 +50,7 @@
 					</checkModificationExcludes>
 				</configuration>
 			</plugin>
+			
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-source-plugin</artifactId>
@@ -36,6 +64,7 @@
 					</execution>
 				</executions>
 			</plugin>
+			
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
@@ -49,6 +78,7 @@
 					</execution>
 				</executions>
 			</plugin>
+			
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-gpg-plugin</artifactId>
@@ -63,8 +93,10 @@
 					</execution>
 				</executions>
 			</plugin>
+			
 		</plugins>
 	</build>
+	
 	
 	<name>QR Code generator library</name>
 	<description>High quality QR Code generator library</description>

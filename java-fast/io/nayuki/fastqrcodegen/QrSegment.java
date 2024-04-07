@@ -1,8 +1,8 @@
 /* 
- * QR Code generator library (Java)
+ * Fast QR Code generator library
  * 
  * Copyright (c) Project Nayuki. (MIT License)
- * https://www.nayuki.io/page/qr-code-generator-library
+ * https://www.nayuki.io/page/fast-qr-code-generator-library
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -21,22 +21,22 @@
  *   Software.
  */
 
-package io.nayuki.qrcodegen;
+package io.nayuki.fastqrcodegen;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 
 /**
  * A segment of character/binary/control data in a QR Code symbol.
  * Instances of this class are immutable.
  * <p>The mid-level way to create a segment is to take the payload data and call a
- * static factory function such as {@link QrSegment#makeNumeric(CharSequence)}. The low-level
+ * static factory function such as {@link QrSegment#makeNumeric(String)}. The low-level
  * way to create a segment is to custom-make the bit buffer and call the {@link
- * QrSegment#QrSegment(Mode,int,BitBuffer) constructor} with appropriate values.</p>
+ * QrSegment#QrSegment(Mode,int,int[],int) constructor} with appropriate values.</p>
  * <p>This segment class imposes no length restrictions, but QR Codes have restrictions.
  * Even in the most favorable conditions, a QR Code can only hold 7089 characters of data.
  * Any segment longer than this is meaningless for the purpose of generating QR Codes.
@@ -58,10 +58,12 @@ public final class QrSegment {
 	 */
 	public static QrSegment makeBytes(byte[] data) {
 		Objects.requireNonNull(data);
-		BitBuffer bb = new BitBuffer();
-		for (byte b : data)
-			bb.appendBits(b & 0xFF, 8);
-		return new QrSegment(Mode.BYTE, data.length, bb);
+		if (data.length * 8L > Integer.MAX_VALUE)
+			throw new IllegalArgumentException("Data too long");
+		int[] bits = new int[(data.length + 3) / 4];
+		for (int i = 0; i < data.length; i++)
+			bits[i >>> 2] |= (data[i] & 0xFF) << (~i << 3);
+		return new QrSegment(Mode.BYTE, data.length, bits, data.length * 8);
 	}
 	
 	
@@ -72,18 +74,26 @@ public final class QrSegment {
 	 * @throws NullPointerException if the string is {@code null}
 	 * @throws IllegalArgumentException if the string contains non-digit characters
 	 */
-	public static QrSegment makeNumeric(CharSequence digits) {
+	public static QrSegment makeNumeric(String digits) {
 		Objects.requireNonNull(digits);
-		if (!isNumeric(digits))
-			throw new IllegalArgumentException("String contains non-numeric characters");
-		
 		BitBuffer bb = new BitBuffer();
-		for (int i = 0; i < digits.length(); ) {  // Consume up to 3 digits per iteration
-			int n = Math.min(digits.length() - i, 3);
-			bb.appendBits(Integer.parseInt(digits.subSequence(i, i + n).toString()), n * 3 + 1);
-			i += n;
+		int accumData = 0;
+		int accumCount = 0;
+		for (int i = 0; i < digits.length(); i++) {
+			char c = digits.charAt(i);
+			if (c < '0' || c > '9')
+				throw new IllegalArgumentException("String contains non-numeric characters");
+			accumData = accumData * 10 + (c - '0');
+			accumCount++;
+			if (accumCount == 3) {
+				bb.appendBits(accumData, 10);
+				accumData = 0;
+				accumCount = 0;
+			}
 		}
-		return new QrSegment(Mode.NUMERIC, digits.length(), bb);
+		if (accumCount > 0)  // 1 or 2 digits remaining
+			bb.appendBits(accumData, accumCount * 3 + 1);
+		return new QrSegment(Mode.NUMERIC, digits.length(), bb.data, bb.bitLength);
 	}
 	
 	
@@ -96,21 +106,26 @@ public final class QrSegment {
 	 * @throws NullPointerException if the string is {@code null}
 	 * @throws IllegalArgumentException if the string contains non-encodable characters
 	 */
-	public static QrSegment makeAlphanumeric(CharSequence text) {
+	public static QrSegment makeAlphanumeric(String text) {
 		Objects.requireNonNull(text);
-		if (!isAlphanumeric(text))
-			throw new IllegalArgumentException("String contains unencodable characters in alphanumeric mode");
-		
 		BitBuffer bb = new BitBuffer();
-		int i;
-		for (i = 0; i <= text.length() - 2; i += 2) {  // Process groups of 2
-			int temp = ALPHANUMERIC_CHARSET.indexOf(text.charAt(i)) * 45;
-			temp += ALPHANUMERIC_CHARSET.indexOf(text.charAt(i + 1));
-			bb.appendBits(temp, 11);
+		int accumData = 0;
+		int accumCount = 0;
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c >= ALPHANUMERIC_MAP.length || ALPHANUMERIC_MAP[c] == -1)
+				throw new IllegalArgumentException("String contains unencodable characters in alphanumeric mode");
+			accumData = accumData * 45 + ALPHANUMERIC_MAP[c];
+			accumCount++;
+			if (accumCount == 2) {
+				bb.appendBits(accumData, 11);
+				accumData = 0;
+				accumCount = 0;
+			}
 		}
-		if (i < text.length())  // 1 character remaining
-			bb.appendBits(ALPHANUMERIC_CHARSET.indexOf(text.charAt(i)), 6);
-		return new QrSegment(Mode.ALPHANUMERIC, text.length(), bb);
+		if (accumCount > 0)  // 1 character remaining
+			bb.appendBits(accumData, 6);
+		return new QrSegment(Mode.ALPHANUMERIC, text.length(), bb.data, bb.bitLength);
 	}
 	
 	
@@ -121,7 +136,7 @@ public final class QrSegment {
 	 * @return a new mutable list (not {@code null}) of segments (not {@code null}) containing the text
 	 * @throws NullPointerException if the text is {@code null}
 	 */
-	public static List<QrSegment> makeSegments(CharSequence text) {
+	public static List<QrSegment> makeSegments(String text) {
 		Objects.requireNonNull(text);
 		
 		// Select the most efficient segment encoding automatically
@@ -132,7 +147,7 @@ public final class QrSegment {
 		else if (isAlphanumeric(text))
 			result.add(makeAlphanumeric(text));
 		else
-			result.add(makeBytes(text.toString().getBytes(StandardCharsets.UTF_8)));
+			result.add(makeBytes(text.getBytes(StandardCharsets.UTF_8)));
 		return result;
 	}
 	
@@ -151,14 +166,14 @@ public final class QrSegment {
 		else if (assignVal < (1 << 7))
 			bb.appendBits(assignVal, 8);
 		else if (assignVal < (1 << 14)) {
-			bb.appendBits(0b10, 2);
+			bb.appendBits(2, 2);
 			bb.appendBits(assignVal, 14);
 		} else if (assignVal < 1_000_000) {
-			bb.appendBits(0b110, 3);
+			bb.appendBits(6, 3);
 			bb.appendBits(assignVal, 21);
 		} else
 			throw new IllegalArgumentException("ECI assignment value out of range");
-		return new QrSegment(Mode.ECI, 0, bb);
+		return new QrSegment(Mode.ECI, 0, bb.data, bb.bitLength);
 	}
 	
 	
@@ -168,10 +183,15 @@ public final class QrSegment {
 	 * @param text the string to test for encodability (not {@code null})
 	 * @return {@code true} iff each character is in the range 0 to 9.
 	 * @throws NullPointerException if the string is {@code null}
-	 * @see #makeNumeric(CharSequence)
+	 * @see #makeNumeric(String)
 	 */
-	public static boolean isNumeric(CharSequence text) {
-		return NUMERIC_REGEX.matcher(text).matches();
+	public static boolean isNumeric(String text) {
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c < '0' || c > '9')
+				return false;
+		}
+		return true;
 	}
 	
 	
@@ -182,10 +202,15 @@ public final class QrSegment {
 	 * @param text the string to test for encodability (not {@code null})
 	 * @return {@code true} iff each character is in the alphanumeric mode character set
 	 * @throws NullPointerException if the string is {@code null}
-	 * @see #makeAlphanumeric(CharSequence)
+	 * @see #makeAlphanumeric(String)
 	 */
-	public static boolean isAlphanumeric(CharSequence text) {
-		return ALPHANUMERIC_REGEX.matcher(text).matches();
+	public static boolean isAlphanumeric(String text) {
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c >= ALPHANUMERIC_MAP.length || ALPHANUMERIC_MAP[c] == -1)
+				return false;
+		}
+		return true;
 	}
 	
 	
@@ -200,8 +225,11 @@ public final class QrSegment {
 	 * Always zero or positive. Not the same as the data's bit length. */
 	public final int numChars;
 	
-	// The data bits of this segment. Not null. Accessed through getData().
-	final BitBuffer data;
+	// The data bits of this segment. Not null.
+	final int[] data;
+	
+	// Requires 0 <= bitLength <= data.length * 32.
+	final int bitLength;
 	
 	
 	/*---- Constructor (low level) ----*/
@@ -213,27 +241,17 @@ public final class QrSegment {
 	 * @param md the mode (not {@code null})
 	 * @param numCh the data length in characters or bytes, which is non-negative
 	 * @param data the data bits (not {@code null})
+	 * @param bitLen the number of valid prefix bits in the data array
 	 * @throws NullPointerException if the mode or data is {@code null}
 	 * @throws IllegalArgumentException if the character count is negative
 	 */
-	public QrSegment(Mode md, int numCh, BitBuffer data) {
+	public QrSegment(Mode md, int numCh, int[] data, int bitLen) {
 		mode = Objects.requireNonNull(md);
-		Objects.requireNonNull(data);
-		if (numCh < 0)
+		this.data = Objects.requireNonNull(data);
+		if (numCh < 0 || bitLen < 0 || bitLen > data.length * 32L)
 			throw new IllegalArgumentException("Invalid value");
 		numChars = numCh;
-		this.data = data.clone();  // Make defensive copy
-	}
-	
-	
-	/*---- Methods ----*/
-	
-	/**
-	 * Returns the data bits of this segment.
-	 * @return a new copy of the data bits (not {@code null})
-	 */
-	public BitBuffer getData() {
-		return data.clone();  // Make defensive copy
+		bitLength = bitLen;
 	}
 	
 	
@@ -248,7 +266,7 @@ public final class QrSegment {
 			int ccbits = seg.mode.numCharCountBits(version);
 			if (seg.numChars >= (1 << ccbits))
 				return -1;  // The segment's length doesn't fit the field's bit width
-			result += 4L + ccbits + seg.data.bitLength();
+			result += 4L + ccbits + seg.bitLength;
 			if (result > Integer.MAX_VALUE)
 				return -1;  // The sum will overflow an int type
 		}
@@ -258,15 +276,18 @@ public final class QrSegment {
 	
 	/*---- Constants ----*/
 	
-	// Describes precisely all strings that are encodable in numeric mode.
-	private static final Pattern NUMERIC_REGEX = Pattern.compile("[0-9]*");
+	static final int[] ALPHANUMERIC_MAP;
 	
-	// Describes precisely all strings that are encodable in alphanumeric mode.
-	private static final Pattern ALPHANUMERIC_REGEX = Pattern.compile("[A-Z0-9 $%*+./:-]*");
-	
-	// The set of all legal characters in alphanumeric mode, where
-	// each character value maps to the index in the string.
-	static final String ALPHANUMERIC_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+	static {
+		final String ALPHANUMERIC_CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+		int maxCh = -1;
+		for (int i = 0; i < ALPHANUMERIC_CHARSET.length(); i++)
+			maxCh = Math.max(ALPHANUMERIC_CHARSET.charAt(i), maxCh);
+		ALPHANUMERIC_MAP = new int[maxCh + 1];
+		Arrays.fill(ALPHANUMERIC_MAP, -1);
+		for (int i = 0; i < ALPHANUMERIC_CHARSET.length(); i++)
+			ALPHANUMERIC_MAP[ALPHANUMERIC_CHARSET.charAt(i)] = i;
+	}
 	
 	
 	

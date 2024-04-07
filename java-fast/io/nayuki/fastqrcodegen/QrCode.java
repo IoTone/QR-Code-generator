@@ -1,8 +1,8 @@
 /* 
- * QR Code generator library (Java)
+ * Fast QR Code generator library
  * 
  * Copyright (c) Project Nayuki. (MIT License)
- * https://www.nayuki.io/page/qr-code-generator-library
+ * https://www.nayuki.io/page/fast-qr-code-generator-library
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy of
  * this software and associated documentation files (the "Software"), to deal in
@@ -21,7 +21,7 @@
  *   Software.
  */
 
-package io.nayuki.qrcodegen;
+package io.nayuki.fastqrcodegen;
 
 import java.util.Arrays;
 import java.util.List;
@@ -37,7 +37,7 @@ import java.util.Objects;
  * from 1 to 40, all 4 error correction levels, and 4 character encoding modes.</p>
  * <p>Ways to create a QR Code object:</p>
  * <ul>
- *   <li><p>High level: Take the payload data and call {@link QrCode#encodeText(CharSequence,Ecc)}
+ *   <li><p>High level: Take the payload data and call {@link QrCode#encodeText(String,Ecc)}
  *     or {@link QrCode#encodeBinary(byte[],Ecc)}.</p></li>
  *   <li><p>Mid level: Custom-make the list of {@link QrSegment segments}
  *     and call {@link QrCode#encodeSegments(List,Ecc)} or
@@ -66,7 +66,7 @@ public final class QrCode {
 	 * @throws DataTooLongException if the text fails to fit in the
 	 * largest version QR Code at the ECL, which means it is too long
 	 */
-	public static QrCode encodeText(CharSequence text, Ecc ecl) {
+	public static QrCode encodeText(String text, Ecc ecl) {
 		Objects.requireNonNull(text);
 		Objects.requireNonNull(ecl);
 		List<QrSegment> segs = QrSegment.makeSegments(text);
@@ -102,7 +102,7 @@ public final class QrCode {
 	 * of the result may be higher than the ecl argument if it can be done without increasing the version.
 	 * <p>This function allows the user to create a custom sequence of segments that switches
 	 * between modes (such as alphanumeric and byte) to encode text in less space.
-	 * This is a mid-level API; the high-level API is {@link #encodeText(CharSequence,Ecc)}
+	 * This is a mid-level API; the high-level API is {@link #encodeText(String,Ecc)}
 	 * and {@link #encodeBinary(byte[],Ecc)}.</p>
 	 * @param segs the segments to encode
 	 * @param ecl the error correction level to use (not {@code null}) (boostable)
@@ -125,7 +125,7 @@ public final class QrCode {
 	 * mask, or &#x2212;1 to automatically choose an appropriate mask (which may be slow).
 	 * <p>This function allows the user to create a custom sequence of segments that switches
 	 * between modes (such as alphanumeric and byte) to encode text in less space.
-	 * This is a mid-level API; the high-level API is {@link #encodeText(CharSequence,Ecc)}
+	 * This is a mid-level API; the high-level API is {@link #encodeText(String,Ecc)}
 	 * and {@link #encodeBinary(byte[],Ecc)}.</p>
 	 * @param segs the segments to encode
 	 * @param ecl the error correction level to use (not {@code null}) (boostable)
@@ -173,28 +173,23 @@ public final class QrCode {
 		for (QrSegment seg : segs) {
 			bb.appendBits(seg.mode.modeBits, 4);
 			bb.appendBits(seg.numChars, seg.mode.numCharCountBits(version));
-			bb.appendData(seg.data);
+			bb.appendBits(seg.data, seg.bitLength);
 		}
-		assert bb.bitLength() == dataUsedBits;
+		assert bb.bitLength == dataUsedBits;
 		
 		// Add terminator and pad up to a byte if applicable
 		int dataCapacityBits = getNumDataCodewords(version, ecl) * 8;
-		assert bb.bitLength() <= dataCapacityBits;
-		bb.appendBits(0, Math.min(4, dataCapacityBits - bb.bitLength()));
-		bb.appendBits(0, (8 - bb.bitLength() % 8) % 8);
-		assert bb.bitLength() % 8 == 0;
+		assert bb.bitLength <= dataCapacityBits;
+		bb.appendBits(0, Math.min(4, dataCapacityBits - bb.bitLength));
+		bb.appendBits(0, (8 - bb.bitLength % 8) % 8);
+		assert bb.bitLength % 8 == 0;
 		
 		// Pad with alternating bytes until data capacity is reached
-		for (int padByte = 0xEC; bb.bitLength() < dataCapacityBits; padByte ^= 0xEC ^ 0x11)
+		for (int padByte = 0xEC; bb.bitLength < dataCapacityBits; padByte ^= 0xEC ^ 0x11)
 			bb.appendBits(padByte, 8);
 		
-		// Pack bits into bytes in big endian
-		byte[] dataCodewords = new byte[bb.bitLength() / 8];
-		for (int i = 0; i < bb.bitLength(); i++)
-			dataCodewords[i >>> 3] |= bb.getBit(i) << (7 - (i & 7));
-		
 		// Create the QR Code object
-		return new QrCode(version, ecl, dataCodewords, mask);
+		return new QrCode(version, ecl, bb.getBytes(), mask);
 	}
 	
 	
@@ -219,14 +214,9 @@ public final class QrCode {
 	 * &#x2212;1), the resulting object still has a mask value between 0 and 7. */
 	public final int mask;
 	
-	// Private grids of modules/pixels, with dimensions of size*size:
-	
-	// The modules of this QR Code (false = light, true = dark).
+	// Private grid of modules of this QR Code, packed tightly into bits.
 	// Immutable after constructor finishes. Accessed through getModule().
-	private boolean[][] modules;
-	
-	// Indicates function modules that are not subjected to masking. Discarded when constructor finishes.
-	private boolean[][] isFunction;
+	private final int[] modules;
 	
 	
 	
@@ -255,34 +245,14 @@ public final class QrCode {
 		size = ver * 4 + 17;
 		errorCorrectionLevel = Objects.requireNonNull(ecl);
 		Objects.requireNonNull(dataCodewords);
-		modules    = new boolean[size][size];  // Initially all light
-		isFunction = new boolean[size][size];
+		
+		QrTemplate tpl = QrTemplate.MEMOIZER.get(ver);
+		modules = tpl.template.clone();
 		
 		// Compute ECC, draw modules, do masking
-		drawFunctionPatterns();
 		byte[] allCodewords = addEccAndInterleave(dataCodewords);
-		drawCodewords(allCodewords);
-		
-		// Do masking
-		if (msk == -1) {  // Automatically choose best mask
-			int minPenalty = Integer.MAX_VALUE;
-			for (int i = 0; i < 8; i++) {
-				applyMask(i);
-				drawFormatBits(i);
-				int penalty = getPenaltyScore();
-				if (penalty < minPenalty) {
-					msk = i;
-					minPenalty = penalty;
-				}
-				applyMask(i);  // Undoes the mask due to XOR
-			}
-		}
-		assert 0 <= msk && msk <= 7;
-		mask = msk;
-		applyMask(msk);  // Apply the final choice of mask
-		drawFormatBits(msk);  // Overwrite old format bits
-		
-		isFunction = null;
+		drawCodewords(tpl.dataOutputBitIndexes, allCodewords);
+		mask = handleConstructorMasking(tpl.masks, msk);
 	}
 	
 	
@@ -299,42 +269,16 @@ public final class QrCode {
 	 * at that location is dark, or {@code false} (light) otherwise
 	 */
 	public boolean getModule(int x, int y) {
-		return 0 <= x && x < size && 0 <= y && y < size && modules[y][x];
+		if (0 <= x && x < size && 0 <= y && y < size) {
+			int i = y * size + x;
+			return getBit(modules[i >>> 5], i) != 0;
+		} else
+			return false;
 	}
 	
 	
 	
 	/*---- Private helper methods for constructor: Drawing function modules ----*/
-	
-	// Reads this object's version field, and draws and marks all function modules.
-	private void drawFunctionPatterns() {
-		// Draw horizontal and vertical timing patterns
-		for (int i = 0; i < size; i++) {
-			setFunctionModule(6, i, i % 2 == 0);
-			setFunctionModule(i, 6, i % 2 == 0);
-		}
-		
-		// Draw 3 finder patterns (all corners except bottom right; overwrites some timing modules)
-		drawFinderPattern(3, 3);
-		drawFinderPattern(size - 4, 3);
-		drawFinderPattern(3, size - 4);
-		
-		// Draw numerous alignment patterns
-		int[] alignPatPos = getAlignmentPatternPositions();
-		int numAlign = alignPatPos.length;
-		for (int i = 0; i < numAlign; i++) {
-			for (int j = 0; j < numAlign; j++) {
-				// Don't draw on the three finder corners
-				if (!(i == 0 && j == 0 || i == 0 && j == numAlign - 1 || i == numAlign - 1 && j == 0))
-					drawAlignmentPattern(alignPatPos[i], alignPatPos[j]);
-			}
-		}
-		
-		// Draw configuration data
-		drawFormatBits(0);  // Dummy mask value; overwritten later in the constructor
-		drawVersion();
-	}
-	
 	
 	// Draws two copies of the format bits (with its own error correction code)
 	// based on the given mask and this object's error correction level field.
@@ -349,75 +293,31 @@ public final class QrCode {
 		
 		// Draw first copy
 		for (int i = 0; i <= 5; i++)
-			setFunctionModule(8, i, getBit(bits, i));
-		setFunctionModule(8, 7, getBit(bits, 6));
-		setFunctionModule(8, 8, getBit(bits, 7));
-		setFunctionModule(7, 8, getBit(bits, 8));
+			setModule(8, i, getBit(bits, i));
+		setModule(8, 7, getBit(bits, 6));
+		setModule(8, 8, getBit(bits, 7));
+		setModule(7, 8, getBit(bits, 8));
 		for (int i = 9; i < 15; i++)
-			setFunctionModule(14 - i, 8, getBit(bits, i));
+			setModule(14 - i, 8, getBit(bits, i));
 		
 		// Draw second copy
 		for (int i = 0; i < 8; i++)
-			setFunctionModule(size - 1 - i, 8, getBit(bits, i));
+			setModule(size - 1 - i, 8, getBit(bits, i));
 		for (int i = 8; i < 15; i++)
-			setFunctionModule(8, size - 15 + i, getBit(bits, i));
-		setFunctionModule(8, size - 8, true);  // Always dark
+			setModule(8, size - 15 + i, getBit(bits, i));
+		setModule(8, size - 8, 1);  // Always dark
 	}
 	
 	
-	// Draws two copies of the version bits (with its own error correction code),
-	// based on this object's version field, iff 7 <= version <= 40.
-	private void drawVersion() {
-		if (version < 7)
-			return;
-		
-		// Calculate error correction code and pack bits
-		int rem = version;  // version is uint6, in the range [7, 40]
-		for (int i = 0; i < 12; i++)
-			rem = (rem << 1) ^ ((rem >>> 11) * 0x1F25);
-		int bits = version << 12 | rem;  // uint18
-		assert bits >>> 18 == 0;
-		
-		// Draw two copies
-		for (int i = 0; i < 18; i++) {
-			boolean bit = getBit(bits, i);
-			int a = size - 11 + i % 3;
-			int b = i / 3;
-			setFunctionModule(a, b, bit);
-			setFunctionModule(b, a, bit);
-		}
-	}
-	
-	
-	// Draws a 9*9 finder pattern including the border separator,
-	// with the center module at (x, y). Modules can be out of bounds.
-	private void drawFinderPattern(int x, int y) {
-		for (int dy = -4; dy <= 4; dy++) {
-			for (int dx = -4; dx <= 4; dx++) {
-				int dist = Math.max(Math.abs(dx), Math.abs(dy));  // Chebyshev/infinity norm
-				int xx = x + dx, yy = y + dy;
-				if (0 <= xx && xx < size && 0 <= yy && yy < size)
-					setFunctionModule(xx, yy, dist != 2 && dist != 4);
-			}
-		}
-	}
-	
-	
-	// Draws a 5*5 alignment pattern, with the center module
-	// at (x, y). All modules must be in bounds.
-	private void drawAlignmentPattern(int x, int y) {
-		for (int dy = -2; dy <= 2; dy++) {
-			for (int dx = -2; dx <= 2; dx++)
-				setFunctionModule(x + dx, y + dy, Math.max(Math.abs(dx), Math.abs(dy)) != 1);
-		}
-	}
-	
-	
-	// Sets the color of a module and marks it as a function module.
+	// Sets the module at the given coordinates to the given color.
 	// Only used by the constructor. Coordinates must be in bounds.
-	private void setFunctionModule(int x, int y, boolean isDark) {
-		modules[y][x] = isDark;
-		isFunction[y][x] = true;
+	private void setModule(int x, int y, int dark) {
+		assert 0 <= x && x < size;
+		assert 0 <= y && y < size;
+		assert dark == 0 || dark == 1;
+		int i = y * size + x;
+		modules[i >>> 5] &= ~(1 << i);
+		modules[i >>> 5] |= dark << i;
 	}
 	
 	
@@ -433,64 +333,42 @@ public final class QrCode {
 		// Calculate parameter numbers
 		int numBlocks = NUM_ERROR_CORRECTION_BLOCKS[errorCorrectionLevel.ordinal()][version];
 		int blockEccLen = ECC_CODEWORDS_PER_BLOCK  [errorCorrectionLevel.ordinal()][version];
-		int rawCodewords = getNumRawDataModules(version) / 8;
+		int rawCodewords = QrTemplate.getNumRawDataModules(version) / 8;
 		int numShortBlocks = numBlocks - rawCodewords % numBlocks;
-		int shortBlockLen = rawCodewords / numBlocks;
+		int shortBlockDataLen = rawCodewords / numBlocks - blockEccLen;
 		
-		// Split data into blocks and append ECC to each block
-		byte[][] blocks = new byte[numBlocks][];
-		byte[] rsDiv = reedSolomonComputeDivisor(blockEccLen);
-		for (int i = 0, k = 0; i < numBlocks; i++) {
-			byte[] dat = Arrays.copyOfRange(data, k, k + shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1));
-			k += dat.length;
-			byte[] block = Arrays.copyOf(dat, shortBlockLen + 1);
-			byte[] ecc = reedSolomonComputeRemainder(dat, rsDiv);
-			System.arraycopy(ecc, 0, block, block.length - blockEccLen, ecc.length);
-			blocks[i] = block;
-		}
-		
-		// Interleave (not concatenate) the bytes from every block into a single sequence
+		// Split data into blocks, calculate ECC, and interleave
+		// (not concatenate) the bytes into a single sequence
 		byte[] result = new byte[rawCodewords];
-		for (int i = 0, k = 0; i < blocks[0].length; i++) {
-			for (int j = 0; j < blocks.length; j++) {
-				// Skip the padding byte in short blocks
-				if (i != shortBlockLen - blockEccLen || j >= numShortBlocks) {
-					result[k] = blocks[j][i];
-					k++;
-				}
+		ReedSolomonGenerator rs = ReedSolomonGenerator.MEMOIZER.get(blockEccLen);
+		byte[] ecc = new byte[blockEccLen];  // Temporary storage per iteration
+		for (int i = 0, k = 0; i < numBlocks; i++) {
+			int datLen = shortBlockDataLen + (i < numShortBlocks ? 0 : 1);
+			rs.getRemainder(data, k, datLen, ecc);
+			for (int j = 0, l = i; j < datLen; j++, k++, l += numBlocks) {  // Copy data
+				if (j == shortBlockDataLen)
+					l -= numShortBlocks;
+				result[l] = data[k];
 			}
+			for (int j = 0, l = data.length + i; j < blockEccLen; j++, l += numBlocks)  // Copy ECC
+				result[l] = ecc[j];
 		}
 		return result;
 	}
 	
 	
-	// Draws the given sequence of 8-bit codewords (data and error correction) onto the entire
-	// data area of this QR Code. Function modules need to be marked off before this is called.
-	private void drawCodewords(byte[] data) {
-		Objects.requireNonNull(data);
-		if (data.length != getNumRawDataModules(version) / 8)
+	// Draws the given sequence of 8-bit codewords (data and error correction)
+	// onto the entire data area of this QR Code, based on the given bit indexes.
+	private void drawCodewords(int[] dataOutputBitIndexes, byte[] allCodewords) {
+		Objects.requireNonNull(dataOutputBitIndexes);
+		Objects.requireNonNull(allCodewords);
+		if (allCodewords.length * 8 != dataOutputBitIndexes.length)
 			throw new IllegalArgumentException();
-		
-		int i = 0;  // Bit index into the data
-		// Do the funny zigzag scan
-		for (int right = size - 1; right >= 1; right -= 2) {  // Index of right column in each column pair
-			if (right == 6)
-				right = 5;
-			for (int vert = 0; vert < size; vert++) {  // Vertical counter
-				for (int j = 0; j < 2; j++) {
-					int x = right - j;  // Actual x coordinate
-					boolean upward = ((right + 1) & 2) == 0;
-					int y = upward ? size - 1 - vert : vert;  // Actual y coordinate
-					if (!isFunction[y][x] && i < data.length * 8) {
-						modules[y][x] = getBit(data[i >>> 3], 7 - (i & 7));
-						i++;
-					}
-					// If this QR Code has any remainder bits (0 to 7), they were assigned as
-					// 0/false/light by the constructor and are left unchanged by this method
-				}
-			}
+		for (int i = 0; i < dataOutputBitIndexes.length; i++) {
+			int j = dataOutputBitIndexes[i];
+			int bit = getBit(allCodewords[i >>> 3], ~i & 7);
+			modules[j >>> 5] |= bit << j;
 		}
-		assert i == data.length * 8;
 	}
 	
 	
@@ -499,26 +377,35 @@ public final class QrCode {
 	// before masking. Due to the arithmetic of XOR, calling applyMask() with
 	// the same mask value a second time will undo the mask. A final well-formed
 	// QR Code needs exactly one (not zero, two, etc.) mask applied.
-	private void applyMask(int msk) {
-		if (msk < 0 || msk > 7)
-			throw new IllegalArgumentException("Mask value out of range");
-		for (int y = 0; y < size; y++) {
-			for (int x = 0; x < size; x++) {
-				boolean invert;
-				switch (msk) {
-					case 0:  invert = (x + y) % 2 == 0;                    break;
-					case 1:  invert = y % 2 == 0;                          break;
-					case 2:  invert = x % 3 == 0;                          break;
-					case 3:  invert = (x + y) % 3 == 0;                    break;
-					case 4:  invert = (x / 3 + y / 2) % 2 == 0;            break;
-					case 5:  invert = x * y % 2 + x * y % 3 == 0;          break;
-					case 6:  invert = (x * y % 2 + x * y % 3) % 2 == 0;    break;
-					case 7:  invert = ((x + y) % 2 + x * y % 3) % 2 == 0;  break;
-					default:  throw new AssertionError();
+	private void applyMask(int[] msk) {
+		if (msk.length != modules.length)
+			throw new IllegalArgumentException();
+		for (int i = 0; i < msk.length; i++)
+			modules[i] ^= msk[i];
+	}
+	
+	
+	// A messy helper function for the constructor. This QR Code must be in an unmasked state when this
+	// method is called. The 'mask' argument is the requested mask, which is -1 for auto or 0 to 7 for fixed.
+	// This method applies and returns the actual mask chosen, from 0 to 7.
+	private int handleConstructorMasking(int[][] masks, int msk) {
+		if (msk == -1) {  // Automatically choose best mask
+			int minPenalty = Integer.MAX_VALUE;
+			for (int i = 0; i < 8; i++) {
+				applyMask(masks[i]);
+				drawFormatBits(i);
+				int penalty = getPenaltyScore();
+				if (penalty < minPenalty) {
+					msk = i;
+					minPenalty = penalty;
 				}
-				modules[y][x] ^= invert & !isFunction[y][x];
+				applyMask(masks[i]);  // Undoes the mask due to XOR
 			}
 		}
+		assert 0 <= msk && msk <= 7;
+		applyMask(masks[msk]);  // Apply the final choice of mask
+		drawFormatBits(msk);  // Overwrite old format bits
+		return msk;  // The caller shall assign this value to the final-declared field
 	}
 	
 	
@@ -526,14 +413,19 @@ public final class QrCode {
 	// This is used by the automatic mask choice algorithm to find the mask pattern that yields the lowest score.
 	private int getPenaltyScore() {
 		int result = 0;
+		int dark = 0;
+		int[] runHistory = new int[7];
 		
-		// Adjacent modules in row having same color, and finder-like patterns
-		for (int y = 0; y < size; y++) {
-			boolean runColor = false;
+		// Iterate over adjacent pairs of rows
+		for (int index = 0, downIndex = size, end = size * size; index < end; ) {
+			int runColor = 0;
 			int runX = 0;
-			int[] runHistory = new int[7];
-			for (int x = 0; x < size; x++) {
-				if (modules[y][x] == runColor) {
+			Arrays.fill(runHistory, 0);
+			int curRow = 0;
+			int nextRow = 0;
+			for (int x = 0; x < size; x++, index++, downIndex++) {
+				int c = getBit(modules[index >>> 5], index);
+				if (c == runColor) {
 					runX++;
 					if (runX == 5)
 						result += PENALTY_N1;
@@ -541,21 +433,31 @@ public final class QrCode {
 						result++;
 				} else {
 					finderPenaltyAddHistory(runX, runHistory);
-					if (!runColor)
+					if (runColor == 0)
 						result += finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
-					runColor = modules[y][x];
+					runColor = c;
 					runX = 1;
+				}
+				dark += c;
+				if (downIndex < end) {
+					curRow = ((curRow << 1) | c) & 3;
+					nextRow = ((nextRow << 1) | getBit(modules[downIndex >>> 5], downIndex)) & 3;
+					// 2*2 blocks of modules having same color
+					if (x >= 1 && (curRow == 0 || curRow == 3) && curRow == nextRow)
+						result += PENALTY_N2;
 				}
 			}
 			result += finderPenaltyTerminateAndCount(runColor, runX, runHistory) * PENALTY_N3;
 		}
-		// Adjacent modules in column having same color, and finder-like patterns
+		
+		// Iterate over single columns
 		for (int x = 0; x < size; x++) {
-			boolean runColor = false;
+			int runColor = 0;
 			int runY = 0;
-			int[] runHistory = new int[7];
-			for (int y = 0; y < size; y++) {
-				if (modules[y][x] == runColor) {
+			Arrays.fill(runHistory, 0);
+			for (int y = 0, index = x; y < size; y++, index += size) {
+				int c = getBit(modules[index >>> 5], index);
+				if (c == runColor) {
 					runY++;
 					if (runY == 5)
 						result += PENALTY_N1;
@@ -563,40 +465,20 @@ public final class QrCode {
 						result++;
 				} else {
 					finderPenaltyAddHistory(runY, runHistory);
-					if (!runColor)
+					if (runColor == 0)
 						result += finderPenaltyCountPatterns(runHistory) * PENALTY_N3;
-					runColor = modules[y][x];
+					runColor = c;
 					runY = 1;
 				}
 			}
 			result += finderPenaltyTerminateAndCount(runColor, runY, runHistory) * PENALTY_N3;
 		}
 		
-		// 2*2 blocks of modules having same color
-		for (int y = 0; y < size - 1; y++) {
-			for (int x = 0; x < size - 1; x++) {
-				boolean color = modules[y][x];
-				if (  color == modules[y][x + 1] &&
-				      color == modules[y + 1][x] &&
-				      color == modules[y + 1][x + 1])
-					result += PENALTY_N2;
-			}
-		}
-		
 		// Balance of dark and light modules
-		int dark = 0;
-		for (boolean[] row : modules) {
-			for (boolean color : row) {
-				if (color)
-					dark++;
-			}
-		}
 		int total = size * size;  // Note that size is odd, so dark/total != 1/2
 		// Compute the smallest integer k >= 0 such that (45-5k)% <= dark/total <= (55+5k)%
 		int k = (Math.abs(dark * 20 - total * 10) + total - 1) / total - 1;
-		assert 0 <= k && k <= 9;
 		result += k * PENALTY_N4;
-		assert 0 <= result && result <= 2568888;  // Non-tight upper bound based on default values of PENALTY_N1, ..., N4
 		return result;
 	}
 	
@@ -604,117 +486,11 @@ public final class QrCode {
 	
 	/*---- Private helper functions ----*/
 	
-	// Returns an ascending list of positions of alignment patterns for this version number.
-	// Each position is in the range [0,177), and are used on both the x and y axes.
-	// This could be implemented as lookup table of 40 variable-length lists of unsigned bytes.
-	private int[] getAlignmentPatternPositions() {
-		if (version == 1)
-			return new int[]{};
-		else {
-			int numAlign = version / 7 + 2;
-			int step;
-			if (version == 32)  // Special snowflake
-				step = 26;
-			else  // step = ceil[(size - 13) / (numAlign * 2 - 2)] * 2
-				step = (version * 4 + numAlign * 2 + 1) / (numAlign * 2 - 2) * 2;
-			int[] result = new int[numAlign];
-			result[0] = 6;
-			for (int i = result.length - 1, pos = size - 7; i >= 1; i--, pos -= step)
-				result[i] = pos;
-			return result;
-		}
-	}
-	
-	
-	// Returns the number of data bits that can be stored in a QR Code of the given version number, after
-	// all function modules are excluded. This includes remainder bits, so it might not be a multiple of 8.
-	// The result is in the range [208, 29648]. This could be implemented as a 40-entry lookup table.
-	private static int getNumRawDataModules(int ver) {
-		if (ver < MIN_VERSION || ver > MAX_VERSION)
-			throw new IllegalArgumentException("Version number out of range");
-		
-		int size = ver * 4 + 17;
-		int result = size * size;   // Number of modules in the whole QR Code square
-		result -= 8 * 8 * 3;        // Subtract the three finders with separators
-		result -= 15 * 2 + 1;       // Subtract the format information and dark module
-		result -= (size - 16) * 2;  // Subtract the timing patterns (excluding finders)
-		// The five lines above are equivalent to: int result = (16 * ver + 128) * ver + 64;
-		if (ver >= 2) {
-			int numAlign = ver / 7 + 2;
-			result -= (numAlign - 1) * (numAlign - 1) * 25;  // Subtract alignment patterns not overlapping with timing patterns
-			result -= (numAlign - 2) * 2 * 20;  // Subtract alignment patterns that overlap with timing patterns
-			// The two lines above are equivalent to: result -= (25 * numAlign - 10) * numAlign - 55;
-			if (ver >= 7)
-				result -= 6 * 3 * 2;  // Subtract version information
-		}
-		assert 208 <= result && result <= 29648;
-		return result;
-	}
-	
-	
-	// Returns a Reed-Solomon ECC generator polynomial for the given degree. This could be
-	// implemented as a lookup table over all possible parameter values, instead of as an algorithm.
-	private static byte[] reedSolomonComputeDivisor(int degree) {
-		if (degree < 1 || degree > 255)
-			throw new IllegalArgumentException("Degree out of range");
-		// Polynomial coefficients are stored from highest to lowest power, excluding the leading term which is always 1.
-		// For example the polynomial x^3 + 255x^2 + 8x + 93 is stored as the uint8 array {255, 8, 93}.
-		byte[] result = new byte[degree];
-		result[degree - 1] = 1;  // Start off with the monomial x^0
-		
-		// Compute the product polynomial (x - r^0) * (x - r^1) * (x - r^2) * ... * (x - r^{degree-1}),
-		// and drop the highest monomial term which is always 1x^degree.
-		// Note that r = 0x02, which is a generator element of this field GF(2^8/0x11D).
-		int root = 1;
-		for (int i = 0; i < degree; i++) {
-			// Multiply the current product by (x - r^i)
-			for (int j = 0; j < result.length; j++) {
-				result[j] = (byte)reedSolomonMultiply(result[j] & 0xFF, root);
-				if (j + 1 < result.length)
-					result[j] ^= result[j + 1];
-			}
-			root = reedSolomonMultiply(root, 0x02);
-		}
-		return result;
-	}
-	
-	
-	// Returns the Reed-Solomon error correction codeword for the given data and divisor polynomials.
-	private static byte[] reedSolomonComputeRemainder(byte[] data, byte[] divisor) {
-		Objects.requireNonNull(data);
-		Objects.requireNonNull(divisor);
-		byte[] result = new byte[divisor.length];
-		for (byte b : data) {  // Polynomial division
-			int factor = (b ^ result[0]) & 0xFF;
-			System.arraycopy(result, 1, result, 0, result.length - 1);
-			result[result.length - 1] = 0;
-			for (int i = 0; i < result.length; i++)
-				result[i] ^= reedSolomonMultiply(divisor[i] & 0xFF, factor);
-		}
-		return result;
-	}
-	
-	
-	// Returns the product of the two given field elements modulo GF(2^8/0x11D). The arguments and result
-	// are unsigned 8-bit integers. This could be implemented as a lookup table of 256*256 entries of uint8.
-	private static int reedSolomonMultiply(int x, int y) {
-		assert x >> 8 == 0 && y >> 8 == 0;
-		// Russian peasant multiplication
-		int z = 0;
-		for (int i = 7; i >= 0; i--) {
-			z = (z << 1) ^ ((z >>> 7) * 0x11D);
-			z ^= ((y >>> i) & 1) * x;
-		}
-		assert z >>> 8 == 0;
-		return z;
-	}
-	
-	
 	// Returns the number of 8-bit data (i.e. not error correction) codewords contained in any
 	// QR Code of the given version number and error correction level, with remainder bits discarded.
 	// This stateless pure function could be implemented as a (40*4)-cell lookup table.
 	static int getNumDataCodewords(int ver, Ecc ecl) {
-		return getNumRawDataModules(ver) / 8
+		return QrTemplate.getNumRawDataModules(ver) / 8
 			- ECC_CODEWORDS_PER_BLOCK    [ecl.ordinal()][ver]
 			* NUM_ERROR_CORRECTION_BLOCKS[ecl.ordinal()][ver];
 	}
@@ -732,8 +508,8 @@ public final class QrCode {
 	
 	
 	// Must be called at the end of a line (row or column) of modules. A helper function for getPenaltyScore().
-	private int finderPenaltyTerminateAndCount(boolean currentRunColor, int currentRunLength, int[] runHistory) {
-		if (currentRunColor) {  // Terminate dark run
+	private int finderPenaltyTerminateAndCount(int currentRunColor, int currentRunLength, int[] runHistory) {
+		if (currentRunColor == 1) {  // Terminate dark run
 			finderPenaltyAddHistory(currentRunLength, runHistory);
 			currentRunLength = 0;
 		}
@@ -752,9 +528,9 @@ public final class QrCode {
 	}
 	
 	
-	// Returns true iff the i'th bit of x is set to 1.
-	static boolean getBit(int x, int i) {
-		return ((x >>> i) & 1) != 0;
+	// Returns 0 or 1 based on the (i mod 32)'th bit of x.
+	static int getBit(int x, int i) {
+		return (x >>> i) & 1;
 	}
 	
 	

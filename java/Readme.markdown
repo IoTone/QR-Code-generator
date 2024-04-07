@@ -1,4 +1,4 @@
-QR Code generator library - Rust
+QR Code generator library - Java
 ================================
 
 
@@ -29,36 +29,37 @@ Manual parameters:
 * User can specify absolute error correction level, or allow the library to boost it if it doesn't increase the version number
 * User can create a list of data segments manually and add ECI segments
 
+Optional advanced features:
+
+* Encodes Japanese Unicode text in kanji mode to save a lot of space compared to UTF-8 bytes
+* Computes optimal segment mode switching for text with mixed numeric/alphanumeric/general/kanji parts
+
 More information about QR Code technology and this library's design can be found on the project home page.
 
 
 Examples
 --------
 
-```rust
-extern crate qrcodegen;
-use qrcodegen::Mask;
-use qrcodegen::QrCode;
-use qrcodegen::QrCodeEcc;
-use qrcodegen::QrSegment;
-use qrcodegen::Version;
+```java
+import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.List;
+import javax.imageio.ImageIO;
+import io.nayuki.qrcodegen.*;
 
 // Simple operation
-let qr = QrCode::encode_text("Hello, world!",
-    QrCodeEcc::Medium).unwrap();
-let svg = to_svg_string(&qr, 4);  // See qrcodegen-demo
+QrCode qr0 = QrCode.encodeText("Hello, world!", QrCode.Ecc.MEDIUM);
+BufferedImage img = toImage(qr0, 4, 10);  // See QrCodeGeneratorDemo
+ImageIO.write(img, "png", new File("qr-code.png"));
 
 // Manual operation
-let text: &str = "3141592653589793238462643383";
-let segs = QrSegment::make_segments(text);
-let qr = QrCode::encode_segments_advanced(&segs,
-    QrCodeEcc::High, Version::new(5), Version::new(5),
-    Some(Mask::new(2)), false).unwrap();
-for y in 0 .. qr.size() {
-    for x in 0 .. qr.size() {
-        (... paint qr.get_module(x, y) ...)
+List<QrSegment> segs = QrSegment.makeSegments("3141592653589793238462643383");
+QrCode qr1 = QrCode.encodeSegments(segs, QrCode.Ecc.HIGH, 5, 5, 2, false);
+for (int y = 0; y < qr1.size; y++) {
+    for (int x = 0; x < qr1.size; x++) {
+        (... paint qr1.getModule(x, y) ...)
     }
 }
 ```
 
-More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/rust/examples/qrcodegen-demo.rs .
+More complete set of examples: https://github.com/nayuki/QR-Code-generator/blob/master/java/QrCodeGeneratorDemo.java .
